@@ -1,0 +1,6 @@
+.DS_Store
+
+irrigation-web-spa/
+
+web/node_modules/
+web/dist/
