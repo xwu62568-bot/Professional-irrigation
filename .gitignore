@@ -4,3 +4,6 @@ irrigation-web-spa/
 
 web/node_modules/
 web/dist/
+web-dev/node_modules/
+web-dev/dist/
+web-dev/.env
