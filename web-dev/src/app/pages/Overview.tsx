@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   AlertTriangle,
@@ -26,6 +26,8 @@ import {
   YAxis,
 } from 'recharts';
 import { useApp } from '../context/AppContext';
+import type { Device, Field } from '../data/mockData';
+import { isAmapConfigured, loadAmap } from '../../lib/amap';
 import {
   etHistory,
   rainfallHistory,
@@ -46,11 +48,204 @@ const STATUS_COLORS = { normal: '#22c55e', warning: '#f59e0b', alarm: '#ef4444' 
 const STATUS_LABELS = { normal: '正常', warning: '预警', alarm: '告警' };
 const FIELD_COLORS = ['#16a34a', '#0ea5e9', '#f59e0b', '#8b5cf6'];
 const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', running: '#22c55e', alarm: '#ef4444' };
-const SVG_W = 900;
-const SVG_H = 520;
+const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923];
+const OVERVIEW_MAP_CENTER_KEY = 'overview-map:last-center';
 
-function polygonToStr(pts: [number, number][]) {
-  return pts.map((p) => p.join(',')).join(' ');
+function getBrowserLocation(): Promise<[number, number]> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new Error('浏览器不支持定位'));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve([position.coords.longitude, position.coords.latitude]);
+      },
+      (error) => reject(error),
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 300000,
+      },
+    );
+  });
+}
+
+function getCityCenter(AMap: any): Promise<[number, number]> {
+  return new Promise((resolve, reject) => {
+    if (!AMap?.CitySearch) {
+      reject(new Error('CitySearch 不可用'));
+      return;
+    }
+
+    const citySearch = new AMap.CitySearch();
+    citySearch.getLocalCity((status: string, result: any) => {
+      if (status !== 'complete' || !result) {
+        reject(new Error('城市定位失败'));
+        return;
+      }
+
+      const rectangle = result.rectangle as string | undefined;
+      if (rectangle) {
+        const [southWest, northEast] = rectangle.split(';');
+        if (southWest && northEast) {
+          const [lng1, lat1] = southWest.split(',').map(Number);
+          const [lng2, lat2] = northEast.split(',').map(Number);
+          if ([lng1, lat1, lng2, lat2].every(Number.isFinite)) {
+            resolve([(lng1 + lng2) / 2, (lat1 + lat2) / 2]);
+            return;
+          }
+        }
+      }
+
+      if (result.center && Array.isArray(result.center) && result.center.length >= 2) {
+        resolve([Number(result.center[0]), Number(result.center[1])]);
+        return;
+      }
+
+      reject(new Error('城市中心点解析失败'));
+    });
+  });
+}
+
+function getBoundaryCenter(boundary: [number, number][]) {
+  if (boundary.length === 0) {
+    return DEFAULT_CENTER;
+  }
+
+  const lng = boundary.reduce((sum, [value]) => sum + value, 0) / boundary.length;
+  const lat = boundary.reduce((sum, [, value]) => sum + value, 0) / boundary.length;
+  return [Number(lng.toFixed(6)), Number(lat.toFixed(6))] as [number, number];
+}
+
+function getInitialCenterFromFields(fields: Field[]) {
+  const fieldWithCenter = fields.find((field) => field.geoCenter);
+  if (fieldWithCenter?.geoCenter) {
+    return fieldWithCenter.geoCenter;
+  }
+
+  const fieldWithBoundary = fields.find((field) => field.geoBoundary && field.geoBoundary.length >= 3);
+  if (fieldWithBoundary?.geoBoundary) {
+    return getBoundaryCenter(fieldWithBoundary.geoBoundary);
+  }
+
+  return null;
+}
+
+function getCachedCenter() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(OVERVIEW_MAP_CENTER_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as [number, number];
+    if (
+      Array.isArray(parsed) &&
+      parsed.length >= 2 &&
+      Number.isFinite(parsed[0]) &&
+      Number.isFinite(parsed[1])
+    ) {
+      return [Number(parsed[0]), Number(parsed[1])] as [number, number];
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function setCachedCenter(center: [number, number]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(OVERVIEW_MAP_CENTER_KEY, JSON.stringify(center));
+  } catch {
+    // ignore cache failures
+  }
+}
+
+function getDeviceMapPoints(device: Device) {
+  if (device.bindings && device.bindings.length > 0) {
+    return device.bindings
+      .filter((binding) => binding.geoPosition)
+      .map((binding) => ({
+        key: `${device.id}:${binding.stationId}`,
+        position: binding.geoPosition!,
+      }));
+  }
+
+  if (device.geoPosition && (device.fieldId || device.zoneId)) {
+    return [{ key: device.id, position: device.geoPosition }];
+  }
+
+  return [];
+}
+
+function getOverviewDeviceMarkers(fields: Field[], devices: Device[]) {
+  const markers: Array<{
+    key: string;
+    position: [number, number];
+    type: Device['type'] | 'fallback';
+    status: Device['status'] | 'offline';
+    label: string;
+  }> = [];
+  const positionedDeviceIds = new Set<string>();
+
+  devices.forEach((device) => {
+    const points = getDeviceMapPoints(device);
+    if (points.length === 0) {
+      return;
+    }
+
+    positionedDeviceIds.add(device.id);
+    points.forEach((point, index) => {
+      markers.push({
+        key: point.key,
+        position: point.position,
+        type: device.type,
+        status: device.status,
+        label: index === 0 ? device.name : `${device.name} ${index + 1}`,
+      });
+    });
+  });
+
+  fields.forEach((field) => {
+    field.zones.forEach((zone) => {
+      if (!zone.geoCenter || zone.deviceIds.length === 0) {
+        return;
+      }
+
+      zone.deviceIds.forEach((deviceId, index) => {
+        if (positionedDeviceIds.has(deviceId)) {
+          return;
+        }
+
+        const offset = 0.00006;
+        const angle = (index % 6) * (Math.PI / 3);
+        const round = Math.floor(index / 6) + 1;
+        markers.push({
+          key: `fallback:${zone.id}:${deviceId}`,
+          position: [
+            Number((zone.geoCenter![0] + Math.cos(angle) * offset * round).toFixed(6)),
+            Number((zone.geoCenter![1] + Math.sin(angle) * offset * round).toFixed(6)),
+          ],
+          type: 'fallback',
+          status: 'offline',
+          label: zone.name,
+        });
+      });
+    });
+  });
+
+  return markers;
 }
 
 function InsightCard({
@@ -127,9 +322,12 @@ export function Overview() {
   const { fields, plans, strategies, devices } = useApp();
   const navigate = useNavigate();
   const [refreshed, setRefreshed] = useState(false);
-  const [hoveredFieldId, setHoveredFieldId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const overviewMapRef = useRef<any>(null);
+  const overviewOverlaysRef = useRef<any[]>([]);
+  const [overviewMapReady, setOverviewMapReady] = useState(false);
+  const [hoveredField, setHoveredField] = useState<(typeof fields)[number] | null>(null);
+  const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
 
   const now = new Date();
   const dateStr = now.toLocaleDateString('zh-CN', {
@@ -148,6 +346,201 @@ export function Overview() {
   const sensorOverview = buildSensorOverview(fields, devices);
   const supplyOverview = buildSupplyOverview(devices, duePlans);
   const strategyState = buildStrategyState(strategies);
+  const amapEnabled = isAmapConfigured();
+  const initialFieldCenter = getInitialCenterFromFields(fields);
+
+  useEffect(() => {
+    if (!amapEnabled || !mapContainerRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadAmap()
+      .then((AMap) => {
+        if (cancelled || overviewMapRef.current || !mapContainerRef.current) {
+          return;
+        }
+
+        const cachedCenter = getCachedCenter();
+        const initialCenter = initialFieldCenter ?? cachedCenter ?? DEFAULT_CENTER;
+        const map = new AMap.Map(mapContainerRef.current, {
+          resizeEnable: true,
+          zoom: 15,
+          mapStyle: 'amap://styles/whitesmoke',
+          center: initialCenter,
+        });
+
+        map.addControl(new AMap.Scale());
+        map.addControl(new AMap.ToolBar({ position: 'RB' }));
+        map.on('moveend', () => {
+          const center = map.getCenter?.();
+          const lng = center?.getLng?.();
+          const lat = center?.getLat?.();
+          if (typeof lng === 'number' && typeof lat === 'number') {
+            setCachedCenter([Number(lng.toFixed(6)), Number(lat.toFixed(6))]);
+          }
+        });
+        overviewMapRef.current = map;
+        setOverviewMapReady(true);
+
+        if (initialFieldCenter) {
+          setCachedCenter(initialFieldCenter);
+          return;
+        }
+
+        getBrowserLocation()
+          .then((center) => {
+            if (cancelled || !overviewMapRef.current) {
+              return;
+            }
+            map.setCenter(center);
+            setCachedCenter(center);
+          })
+          .catch(() => {
+            getCityCenter(AMap)
+              .then((center) => {
+                if (cancelled || !overviewMapRef.current) {
+                  return;
+                }
+                map.setCenter(center);
+                setCachedCenter(center);
+              })
+              .catch(() => {});
+          });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [amapEnabled, initialFieldCenter]);
+
+  useEffect(() => {
+    return () => {
+      overviewOverlaysRef.current.forEach((overlay) => overlay.setMap?.(null));
+      overviewMapRef.current?.destroy?.();
+      overviewMapRef.current = null;
+      setOverviewMapReady(false);
+      setHoveredField(null);
+      setHoverPosition(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = overviewMapRef.current;
+    const AMap = typeof window !== 'undefined' ? window.AMap : null;
+    if (!map || !AMap || !overviewMapReady) {
+      return;
+    }
+
+    overviewOverlaysRef.current.forEach((overlay) => overlay.setMap?.(null));
+    overviewOverlaysRef.current = [];
+
+    const nextOverlays: any[] = [];
+
+    fields.forEach((field, idx) => {
+      if (!field.geoBoundary || field.geoBoundary.length < 3) {
+        return;
+      }
+
+      const color = FIELD_COLORS[idx % FIELD_COLORS.length];
+      const runningZones = field.zones.filter((zone) => zone.status === 'running');
+      const alarmZones = field.zones.filter((zone) => zone.status === 'alarm');
+
+      const polygon = new AMap.Polygon({
+        path: field.geoBoundary,
+        strokeColor: STATUS_COLORS[field.status],
+        strokeWeight: 2,
+        fillColor: color,
+        fillOpacity: 0.18,
+        zIndex: 20,
+      });
+      polygon.on('mouseover', (event: any) => {
+        setHoveredField(field);
+        if (event?.pixel) {
+          setHoverPosition({ x: event.pixel.x + 14, y: event.pixel.y - 18 });
+        }
+      });
+      polygon.on('mousemove', (event: any) => {
+        if (event?.pixel) {
+          setHoverPosition({ x: event.pixel.x + 14, y: event.pixel.y - 18 });
+        }
+      });
+      polygon.on('mouseout', () => {
+        setHoveredField(null);
+        setHoverPosition(null);
+      });
+      polygon.on('click', () => navigate(`/field/${field.id}`));
+      polygon.setMap(map);
+      nextOverlays.push(polygon);
+
+      field.zones.forEach((zone) => {
+        if (!zone.geoBoundary || zone.geoBoundary.length < 3) {
+          return;
+        }
+
+        const zonePolygon = new AMap.Polygon({
+          path: zone.geoBoundary,
+          strokeColor: ZONE_STATUS_COLORS[zone.status],
+          strokeWeight: zone.status === 'idle' ? 1 : 2,
+          strokeStyle: 'dashed',
+          fillOpacity: zone.status === 'running' ? 0.08 : 0,
+          fillColor: '#2563eb',
+          zIndex: 25,
+        });
+        zonePolygon.setMap(map);
+        nextOverlays.push(zonePolygon);
+      });
+
+      const label = new AMap.Text({
+        text: alarmZones.length > 0 ? `${field.name} · ${alarmZones.length}区告警` : runningZones.length > 0 ? `${field.name} · ${runningZones.length}区运行` : field.name,
+        position: field.geoCenter ?? field.geoBoundary[0],
+        offset: new AMap.Pixel(-48, -34),
+        style: {
+          padding: '4px 10px',
+          borderRadius: '999px',
+          border: 'none',
+          background: 'rgba(15, 23, 42, 0.78)',
+          color: '#fff',
+          fontSize: '12px',
+          fontWeight: '600',
+        },
+      });
+      label.setMap(map);
+      nextOverlays.push(label);
+    });
+
+    getOverviewDeviceMarkers(fields, devices).forEach((markerInfo) => {
+        const fillColor = markerInfo.type === 'fallback'
+          ? '#0f172a'
+          : markerInfo.status === 'online'
+            ? '#22c55e'
+            : markerInfo.status === 'alarm'
+              ? '#ef4444'
+              : '#94a3b8';
+
+        const marker = new AMap.Marker({
+          position: markerInfo.position,
+          anchor: 'bottom-center',
+          content: `
+            <div title="${markerInfo.label}" style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:${fillColor};color:#fff;border:2px solid #fff;box-shadow:0 6px 16px rgba(15,23,42,.22);font-size:11px;font-weight:700;">
+              ${markerInfo.type === 'fallback' ? 'D' : markerInfo.type === 'sensor' ? 'S' : markerInfo.type === 'valve' ? 'V' : markerInfo.type === 'pump' ? 'P' : 'C'}
+            </div>
+          `,
+          offset: new AMap.Pixel(-12, -12),
+          zIndex: 45,
+        });
+        marker.setMap(map);
+        nextOverlays.push(marker);
+      });
+
+    overviewOverlaysRef.current = nextOverlays;
+
+    if (nextOverlays.length > 0) {
+      map.setFitView(nextOverlays, false, [40, 40, 40, 40]);
+    }
+  }, [devices, fields, navigate, overviewMapReady]);
 
   return (
     <div className="flex flex-col h-full overflow-auto" style={{ background: '#f0f4f8' }}>
@@ -370,190 +763,51 @@ export function Overview() {
             </div>
             <div style={{ minHeight: 440, height: 'calc(100% - 53px)' }}>
               <div
-                className="relative overflow-hidden flex items-center justify-center"
+                className="relative overflow-hidden"
                 style={{ minHeight: 440, height: '100%' }}
                 ref={mapContainerRef}
               >
-                <svg
-                  viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-                  className="w-full h-full"
-                  style={{
-                    background: 'linear-gradient(160deg, #2f5d2b 0%, #45723f 52%, #3d6a36 100%)',
-                    display: 'block',
-                    margin: '0 auto',
-                  }}
-                >
-                  <defs>
-                    <pattern id="overview-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
-                    </pattern>
-                  </defs>
-                  <rect width={SVG_W} height={SVG_H} fill="url(#overview-grid)" />
-
-                  {fields.map((field, idx) => {
-                    const color = FIELD_COLORS[idx % FIELD_COLORS.length];
-                    const isHovered = hoveredFieldId === field.id;
-                    const runningZones = field.zones.filter((zone) => zone.status === 'running');
-                    const alarmZones = field.zones.filter((zone) => zone.status === 'alarm');
-
-                    return (
-                      <g key={field.id}>
-                        <polygon
-                          points={polygonToStr(field.polygon)}
-                          fill={`${color}${isHovered ? '58' : '24'}`}
-                          stroke={STATUS_COLORS[field.status]}
-                          strokeWidth={isHovered ? 3 : 1.5}
-                          strokeDasharray={isHovered ? 'none' : '8,3'}
-                          style={{ cursor: 'pointer', transition: 'all 0.15s' }}
-                          onClick={() => navigate(`/field/${field.id}`)}
-                          onMouseEnter={(event) => {
-                            setHoveredFieldId(field.id);
-                            const rect = mapContainerRef.current?.getBoundingClientRect();
-                            if (rect) {
-                              setTooltipPos({ x: event.clientX - rect.left + 14, y: event.clientY - rect.top - 10 });
-                            }
-                          }}
-                          onMouseMove={(event) => {
-                            const rect = mapContainerRef.current?.getBoundingClientRect();
-                            if (rect) {
-                              setTooltipPos({ x: event.clientX - rect.left + 14, y: event.clientY - rect.top - 10 });
-                            }
-                          }}
-                          onMouseLeave={() => {
-                            setHoveredFieldId(null);
-                            setTooltipPos(null);
-                          }}
-                        />
-
-                        {field.zones.map((zone) => (
-                          <g key={zone.id}>
-                            <polygon
-                              points={polygonToStr(zone.polygon)}
-                              fill={zone.status === 'running' ? `${color}20` : 'transparent'}
-                              stroke={ZONE_STATUS_COLORS[zone.status]}
-                              strokeWidth={zone.status !== 'idle' ? 1.4 : 0.9}
-                              strokeDasharray="4,2"
-                              style={{ pointerEvents: 'none' }}
-                            />
-                            <text
-                              x={zone.center[0]}
-                              y={zone.center[1]}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                              fill="rgba(255,255,255,0.88)"
-                              fontSize={9}
-                              style={{ pointerEvents: 'none', fontWeight: 500 }}
-                            >
-                              {zone.name}
-                            </text>
-                          </g>
-                        ))}
-
-                        <circle
-                          cx={field.center[0]}
-                          cy={field.center[1]}
-                          r={isHovered ? 12 : 10}
-                          fill={STATUS_COLORS[field.status]}
-                          stroke="white"
-                          strokeWidth="2.5"
-                          onClick={() => navigate(`/field/${field.id}`)}
-                          style={{ cursor: 'pointer', transition: 'all 0.15s' }}
-                        />
-                        <text
-                          x={field.center[0]}
-                          y={field.center[1] + 22}
-                          textAnchor="middle"
-                          fill="white"
-                          fontSize={11}
-                          fontWeight="600"
-                          style={{ pointerEvents: 'none', textShadow: '0 1px 4px rgba(0,0,0,0.9)' }}
-                        >
-                          {field.name}
-                        </text>
-
-                        {(runningZones.length > 0 || alarmZones.length > 0) && (
-                          <g style={{ pointerEvents: 'none' }}>
-                            <rect
-                              x={field.center[0] - 24}
-                              y={field.center[1] + 29}
-                              width={48}
-                              height={13}
-                              rx={6}
-                              fill={alarmZones.length > 0 ? '#ef4444' : '#22c55e'}
-                              opacity={0.92}
-                            />
-                            <text
-                              x={field.center[0]}
-                              y={field.center[1] + 36}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                              fill="white"
-                              fontSize={8}
-                              fontWeight="700"
-                            >
-                              {alarmZones.length > 0 ? `${alarmZones.length}区告警` : `${runningZones.length}区运行`}
-                            </text>
-                          </g>
-                        )}
-                      </g>
-                    );
-                  })}
-
-                  {devices.filter((device) => device.fieldId && device.zoneId).map((device) => (
-                    <circle
-                      key={device.id}
-                      cx={device.position[0]}
-                      cy={device.position[1]}
-                      r={4}
-                      fill={device.status === 'online' ? '#22c55e' : device.status === 'alarm' ? '#ef4444' : '#94a3b8'}
-                      stroke="rgba(255,255,255,0.88)"
-                      strokeWidth="1.5"
-                      style={{ pointerEvents: 'none' }}
-                    />
-                  ))}
-                </svg>
-
-                {hoveredFieldId && tooltipPos && (() => {
-                  const field = fields.find((item) => item.id === hoveredFieldId);
-                  if (!field) return null;
-                  return (
-                    <div
-                      className="absolute rounded-2xl p-4 pointer-events-none"
-                      style={{
-                        left: tooltipPos.x,
-                        top: Math.max(8, tooltipPos.y),
-                        width: 208,
-                        background: 'rgba(11, 20, 35, 0.94)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        backdropFilter: 'blur(8px)',
-                        boxShadow: '0 18px 40px rgba(15,23,42,0.28)',
-                      }}
-                    >
-                      <div className="flex items-center gap-2 mb-3">
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLORS[field.status] }} />
-                        <span style={{ color: '#ffffff', fontSize: 13, fontWeight: 600 }}>{field.name}</span>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex justify-between">
-                          <span style={{ color: '#64748b', fontSize: 10 }}>作物 / 生育期</span>
-                          <span style={{ color: '#cbd5e1', fontSize: 10 }}>{field.crop} · {field.growthStage}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span style={{ color: '#64748b', fontSize: 10 }}>土壤湿度</span>
-                          <span style={{ color: '#22c55e', fontSize: 10, fontWeight: 700 }}>{field.soilMoisture}%</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span style={{ color: '#64748b', fontSize: 10 }}>建议灌溉</span>
-                          <span style={{ color: '#cbd5e1', fontSize: 10 }}>{field.recommendedDuration} 分钟</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span style={{ color: '#64748b', fontSize: 10 }}>ETc</span>
-                          <span style={{ color: '#cbd5e1', fontSize: 10 }}>{field.etc} mm/d</span>
-                        </div>
-                      </div>
+                {amapEnabled && !overviewMapReady && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.72)' }}>
+                    <div style={{ color: '#64748b', fontSize: 13 }}>地图加载中...</div>
+                  </div>
+                )}
+                {!amapEnabled && (
+                  <div className="absolute inset-0 flex items-center justify-center px-8 text-center">
+                    <div>
+                      <Droplets size={34} color="#64748b" style={{ margin: '0 auto 12px' }} />
+                      <div style={{ color: '#0f172a', fontSize: 18, fontWeight: 600, marginBottom: 8 }}>总览地图待接入</div>
+                      <div style={{ color: '#64748b', fontSize: 14 }}>请先配置高德地图 Key</div>
                     </div>
-                  );
-                })()}
+                  </div>
+                )}
+                {amapEnabled && overviewMapReady && hoveredField && hoverPosition && (
+                  <div
+                    className="pointer-events-none absolute z-10 rounded-2xl p-4"
+                    style={{
+                      width: 240,
+                      left: hoverPosition.x,
+                      top: hoverPosition.y,
+                      background: 'rgba(255,255,255,0.92)',
+                      border: '1px solid #e2e8f0',
+                      boxShadow: '0 12px 28px rgba(15,23,42,0.12)',
+                      backdropFilter: 'blur(8px)',
+                    }}
+                  >
+                    <div style={{ color: '#0f172a', fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+                      {hoveredField.name}
+                    </div>
+                    <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>
+                      {hoveredField.crop} · {hoveredField.growthStage}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <MiniMetric label="土壤湿度" value={`${hoveredField.soilMoisture}%`} />
+                      <MiniMetric label="ETc" value={`${hoveredField.etc.toFixed(1)} mm/d`} />
+                      <MiniMetric label="建议时长" value={`${hoveredField.recommendedDuration} min`} />
+                      <MiniMetric label="分区数" value={`${hoveredField.zones.length}`} />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </article>

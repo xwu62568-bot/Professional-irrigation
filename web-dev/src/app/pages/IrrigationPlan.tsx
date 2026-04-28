@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
 import {
   Plus, Clock, Edit3, Trash2, Play, ChevronDown, ChevronUp, AlertTriangle,
   X, CalendarClock
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Plan, PlanZone } from '../data/mockData';
+import { createPlanInSupabase, deletePlanInSupabase, updatePlanInSupabase } from '../../lib/planService';
 
 type CycleType = 'daily' | 'weekly' | 'interval';
 type ExecMode = 'duration' | 'quantity';
@@ -49,8 +49,7 @@ const defaultForm = (): PlanFormState => ({
 });
 
 export function IrrigationPlan() {
-  const { fields, plans, setPlans } = useApp();
-  const navigate = useNavigate();
+  const { authMode, user, fields, plans, setPlans, refreshPlans } = useApp();
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -58,12 +57,20 @@ export function IrrigationPlan() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [form, setForm] = useState<PlanFormState>(defaultForm());
   const [executeConfirm, setExecuteConfirm] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
 
   const selectedField = fields.find(f => f.id === form.fieldId);
+  const executionServiceUrl = import.meta.env.VITE_EXECUTION_SERVICE_URL?.trim() || '';
 
   const openCreate = () => {
     setForm(defaultForm());
     setEditingId(null);
+    setFormError(null);
     setShowForm(true);
   };
 
@@ -86,6 +93,7 @@ export function IrrigationPlan() {
       allowSplit: plan.allowSplit ?? false,
     });
     setEditingId(plan.id);
+    setFormError(null);
     setShowForm(true);
   };
 
@@ -97,9 +105,28 @@ export function IrrigationPlan() {
     setForm(prev => ({ ...prev, fieldId, zones }));
   };
 
-  const savePlan = () => {
-    if (!form.name || !form.fieldId) return;
-    const field = fields.find(f => f.id === form.fieldId)!;
+  const savePlan = async () => {
+    setFormError(null);
+    setActionError(null);
+    setActionNotice(null);
+
+    if (!form.name.trim()) {
+      setFormError('请先填写计划名称。');
+      return;
+    }
+    if (!form.fieldId) {
+      setFormError('请先选择所属地块。');
+      return;
+    }
+    if (form.zones.filter(z => z.enabled).length === 0) {
+      setFormError('请至少启用一个分区。');
+      return;
+    }
+    if (authMode === 'supabase' && !user) {
+      setFormError('当前未登录，无法保存计划。');
+      return;
+    }
+
     const totalDuration = form.zones.filter(z => z.enabled).reduce((s, z) => s + z.duration, 0);
     const cycleValue = form.cycle === 'weekly' ? form.weekdays : form.cycle === 'interval' ? form.cycleInterval : undefined;
 
@@ -122,30 +149,79 @@ export function IrrigationPlan() {
       allowSplit: form.executionMode === 'quantity' ? form.allowSplit : undefined,
     };
 
-    if (editingId) {
-      setPlans(prev => prev.map(p => p.id === editingId ? { ...planData, id: editingId } : p));
-    } else {
-      setPlans(prev => [...prev, { ...planData, id: `p${Date.now()}` }]);
+    try {
+      setIsSaving(true);
+      if (authMode === 'supabase' && user) {
+        if (editingId) {
+          await updatePlanInSupabase({ planId: editingId, fields, plan: planData });
+        } else {
+          await createPlanInSupabase({ userId: user.id, fields, plan: planData });
+        }
+        await refreshPlans();
+      } else if (editingId) {
+        setPlans(prev => prev.map(p => p.id === editingId ? { ...planData, id: editingId } : p));
+      } else {
+        setPlans(prev => [...prev, { ...planData, id: `p${Date.now()}` }]);
+      }
+      setShowForm(false);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : '保存计划失败');
+    } finally {
+      setIsSaving(false);
     }
-    setShowForm(false);
   };
 
-  const deletePlan = (id: string) => {
-    setPlans(prev => prev.filter(p => p.id !== id));
-    setDeleteConfirm(null);
+  const deletePlan = async (id: string) => {
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      setIsDeleting(true);
+      if (authMode === 'supabase') {
+        await deletePlanInSupabase(id);
+        await refreshPlans();
+      } else {
+        setPlans(prev => prev.filter(p => p.id !== id));
+      }
+      setDeleteConfirm(null);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '删除计划失败');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
-  const toggleMode = (id: string) => {
-    setPlans(prev => prev.map(p => {
-      if (p.id !== id) return p;
+  const persistPlanUpdate = async (id: string, updater: (plan: Plan) => Plan) => {
+    setActionError(null);
+    setActionNotice(null);
+    const current = plans.find((plan) => plan.id === id);
+    if (!current) {
+      return;
+    }
+
+    const next = updater(current);
+    try {
+      if (authMode === 'supabase') {
+        const { id: _ignored, ...planPayload } = next;
+        await updatePlanInSupabase({ planId: id, fields, plan: planPayload });
+        await refreshPlans();
+      } else {
+        setPlans(prev => prev.map(p => p.id === id ? next : p));
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '更新计划失败');
+    }
+  };
+
+  const toggleMode = async (id: string) => {
+    await persistPlanUpdate(id, (plan) => {
       const modes: PlanMode[] = ['manual', 'confirm', 'auto'];
-      const next = modes[(modes.indexOf(p.mode) + 1) % 3];
-      return { ...p, mode: next };
-    }));
+      const next = modes[(modes.indexOf(plan.mode) + 1) % 3];
+      return { ...plan, mode: next };
+    });
   };
 
-  const toggleEnabled = (id: string) => {
-    setPlans(prev => prev.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p));
+  const toggleEnabled = async (id: string) => {
+    await persistPlanUpdate(id, (plan) => ({ ...plan, enabled: !plan.enabled }));
   };
 
   const getFieldName = (fieldId: string) => fields.find(f => f.id === fieldId)?.name ?? '—';
@@ -163,6 +239,35 @@ export function IrrigationPlan() {
       [zones[idx], zones[target]] = [zones[target], zones[idx]];
       return { ...prev, zones: zones.map((z, i) => ({ ...z, order: i + 1 })) };
     });
+  };
+
+  const executePlan = async (planId: string) => {
+    setActionError(null);
+    setActionNotice(null);
+
+    if (!executionServiceUrl) {
+      setActionError('未配置执行服务地址，请先在 .env 中填写 VITE_EXECUTION_SERVICE_URL。');
+      return;
+    }
+
+    try {
+      setIsExecuting(true);
+      const response = await fetch(`${executionServiceUrl}/runs/manual-start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ planId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || '启动执行失败');
+      }
+      setExecuteConfirm(null);
+      setActionNotice(`计划已提交执行，runId: ${data.runId}`);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '启动执行失败');
+    } finally {
+      setIsExecuting(false);
+    }
   };
 
   return (
@@ -184,6 +289,16 @@ export function IrrigationPlan() {
               <Plus size={18} /> 新增计划
             </button>
           </div>
+          {actionError && (
+            <div className="mt-3 px-3 py-2 rounded-xl" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 13 }}>
+              {actionError}
+            </div>
+          )}
+          {actionNotice && (
+            <div className="mt-3 px-3 py-2 rounded-xl" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontSize: 13 }}>
+              {actionNotice}
+            </div>
+          )}
         </div>
 
         {/* Plan list */}
@@ -366,6 +481,11 @@ export function IrrigationPlan() {
 
             {/* Form body */}
             <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
+              {formError && (
+                <div className="px-4 py-3 rounded-xl" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 13 }}>
+                  {formError}
+                </div>
+              )}
               {/* 基础信息 */}
               <section>
                 <h3 style={{ color: '#0f172a', fontSize: 14, fontWeight: 600, marginBottom: 12 }}>基础信息</h3>
@@ -613,8 +733,8 @@ export function IrrigationPlan() {
             {/* Form footer */}
             <div className="flex gap-3 px-6 py-4" style={{ borderTop: '1px solid #e2e8f0' }}>
               <button onClick={() => setShowForm(false)} className="flex-1 py-3 rounded-xl" style={{ border: '1px solid #e2e8f0', color: '#64748b', fontSize: 14 }}>取消</button>
-              <button onClick={savePlan} className="flex-1 py-3 rounded-xl" style={{ background: '#16a34a', color: '#ffffff', fontSize: 14 }}>
-                {editingId ? '保存修改' : '创建计划'}
+              <button disabled={isSaving} onClick={() => void savePlan()} className="flex-1 py-3 rounded-xl disabled:opacity-60" style={{ background: '#16a34a', color: '#ffffff', fontSize: 14 }}>
+                {isSaving ? '保存中...' : editingId ? '保存修改' : '创建计划'}
               </button>
             </div>
           </div>
@@ -636,7 +756,7 @@ export function IrrigationPlan() {
             </div>
             <div className="flex gap-3 mt-4">
               <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-2.5 rounded-xl" style={{ border: '1px solid #e2e8f0', color: '#64748b', fontSize: 14 }}>取消</button>
-              <button onClick={() => deletePlan(deleteConfirm)} className="flex-1 py-2.5 rounded-xl" style={{ background: '#ef4444', color: '#ffffff', fontSize: 14 }}>确认删除</button>
+              <button disabled={isDeleting} onClick={() => void deletePlan(deleteConfirm)} className="flex-1 py-2.5 rounded-xl disabled:opacity-60" style={{ background: '#ef4444', color: '#ffffff', fontSize: 14 }}>{isDeleting ? '删除中...' : '确认删除'}</button>
             </div>
           </div>
         </div>
@@ -657,7 +777,7 @@ export function IrrigationPlan() {
             </div>
             <div className="flex gap-3 mt-4">
               <button onClick={() => setExecuteConfirm(null)} className="flex-1 py-2.5 rounded-xl" style={{ border: '1px solid #e2e8f0', color: '#64748b', fontSize: 14 }}>取消</button>
-              <button onClick={() => setExecuteConfirm(null)} className="flex-1 py-2.5 rounded-xl" style={{ background: '#16a34a', color: '#ffffff', fontSize: 14 }}>确认执行</button>
+              <button disabled={isExecuting} onClick={() => void executePlan(executeConfirm)} className="flex-1 py-2.5 rounded-xl disabled:opacity-60" style={{ background: '#16a34a', color: '#ffffff', fontSize: 14 }}>{isExecuting ? '启动中...' : '确认执行'}</button>
             </div>
           </div>
         </div>

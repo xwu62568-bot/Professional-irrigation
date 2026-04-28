@@ -9,6 +9,7 @@ import { IrrigationPlan } from './pages/IrrigationPlan';
 import { AutoStrategy } from './pages/AutoStrategy';
 import { Devices } from './pages/Devices';
 import { Account } from './pages/Account';
+import { WifiDeviceDemo } from './pages/WifiDeviceDemo';
 
 function RedirectToOverview() {
   return <Navigate to="/overview" replace />;
@@ -36,6 +37,7 @@ const routes = [
       { path: 'irrigation-plan', Component: IrrigationPlan },
       { path: 'auto-strategy', Component: AutoStrategy },
       { path: 'devices', Component: Devices },
+      { path: 'wifi-device-demo', Component: WifiDeviceDemo },
       { path: 'account', Component: Account },
     ],
   },

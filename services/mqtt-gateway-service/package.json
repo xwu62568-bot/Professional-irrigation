@@ -1,0 +1,13 @@
+{
+  "name": "mqtt-gateway-service",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "mqtt": "^5.10.4"
+  },
+  "scripts": {
+    "dev": "NODE_OPTIONS=--openssl-legacy-provider node --watch src/index.mjs",
+    "start": "NODE_OPTIONS=--openssl-legacy-provider node src/index.mjs"
+  }
+}

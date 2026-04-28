@@ -20,6 +20,8 @@ export interface Field {
   kcUpdateTime: string;
   polygon: [number, number][];
   center: [number, number];
+  geoBoundary?: [number, number][];
+  geoCenter?: [number, number];
   zones: Zone[];
 }
 
@@ -33,6 +35,8 @@ export interface Zone {
   soilMoisture: number;
   polygon: [number, number][];
   center: [number, number];
+  geoBoundary?: [number, number][];
+  geoCenter?: [number, number];
   deviceIds: string[];
 }
 
@@ -43,12 +47,24 @@ export interface Device {
   type: 'valve' | 'sensor' | 'controller' | 'pump';
   status: 'online' | 'offline' | 'alarm';
   position: [number, number];
+  geoPosition?: [number, number];
   zoneId: string;
   fieldId: string;
   stationNo?: string;
   lastSeen: string;
   signalStrength?: number;
   batteryLevel?: number;
+  stations?: Array<{
+    id: string;
+    name: string;
+  }>;
+  bindings?: Array<{
+    fieldId: string;
+    zoneId: string;
+    stationId: string;
+    stationName: string;
+    geoPosition?: [number, number];
+  }>;
 }
 
 export interface Plan {

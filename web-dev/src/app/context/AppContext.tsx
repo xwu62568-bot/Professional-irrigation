@@ -5,6 +5,10 @@ import {
   mockFields, mockDevices, mockPlans, mockStrategies
 } from '../data/mockData';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import { fetchFieldsFromSupabase } from '../../lib/fieldService';
+import { fetchDevicesFromSupabase, seedDevicesInSupabase } from '../../lib/deviceService';
+import { getWifiDemoAppDevice } from '../../lib/wifiDemoConfig';
+import { fetchPlansFromSupabase } from '../../lib/planService';
 
 interface AppUser {
   id: string;
@@ -25,10 +29,14 @@ interface AppContextType {
 
   fields: Field[];
   setFields: React.Dispatch<React.SetStateAction<Field[]>>;
+  isFieldsLoading: boolean;
+  refreshFields: () => Promise<void>;
   devices: Device[];
   setDevices: React.Dispatch<React.SetStateAction<Device[]>>;
+  refreshDevices: () => Promise<void>;
   plans: Plan[];
   setPlans: React.Dispatch<React.SetStateAction<Plan[]>>;
+  refreshPlans: () => Promise<void>;
   strategies: Strategy[];
   setStrategies: React.Dispatch<React.SetStateAction<Strategy[]>>;
 
@@ -46,6 +54,24 @@ const MOCK_USER: AppUser = {
   role: '系统管理员',
   avatar: 'ZJ',
 };
+
+function withWifiDemoDevice(devices: Device[]) {
+  const wifiDemoDevice = getWifiDemoAppDevice();
+  if (!wifiDemoDevice) {
+    return devices;
+  }
+
+  const exists = devices.some((device) => device.id === wifiDemoDevice.id);
+  if (exists) {
+    return devices.map((device) => (
+      device.id === wifiDemoDevice.id
+        ? { ...device, ...wifiDemoDevice, bindings: device.bindings ?? wifiDemoDevice.bindings }
+        : device
+    ));
+  }
+
+  return [...devices, wifiDemoDevice];
+}
 
 function deriveUser(session: Session): AppUser {
   const email = session.user.email ?? '';
@@ -71,6 +97,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [fields, setFields] = useState<Field[]>(mockFields);
+  const [isFieldsLoading, setIsFieldsLoading] = useState(false);
   const [devices, setDevices] = useState<Device[]>(mockDevices);
   const [plans, setPlans] = useState<Plan[]>(mockPlans);
   const [strategies, setStrategies] = useState<Strategy[]>(mockStrategies);
@@ -109,6 +136,84 @@ export function AppProvider({ children }: { children: ReactNode }) {
       subscription.unsubscribe();
     };
   }, []);
+
+  const refreshFields = async () => {
+    if (!supabase) {
+      setFields(mockFields);
+      return;
+    }
+
+    setIsFieldsLoading(true);
+    try {
+      const nextFields = await fetchFieldsFromSupabase();
+      setFields(nextFields);
+    } catch (error) {
+      console.error('Failed to load fields from Supabase:', error);
+    } finally {
+      setIsFieldsLoading(false);
+    }
+  };
+
+  const refreshDevices = async () => {
+    if (!supabase) {
+      setDevices(withWifiDemoDevice(mockDevices));
+      return;
+    }
+
+    if (!user) {
+      setDevices([]);
+      return;
+    }
+
+    try {
+      await seedDevicesInSupabase(user.id);
+      const nextDevices = await fetchDevicesFromSupabase();
+      setDevices(withWifiDemoDevice(nextDevices));
+    } catch (error) {
+      console.error('Failed to load devices from Supabase:', error);
+    }
+  };
+
+  const refreshPlans = async () => {
+    if (!supabase) {
+      setPlans(mockPlans);
+      return;
+    }
+
+    if (!user) {
+      setPlans([]);
+      return;
+    }
+
+    try {
+      const nextPlans = await fetchPlansFromSupabase();
+      setPlans(nextPlans);
+    } catch (error) {
+      console.error('Failed to load plans from Supabase:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!supabase) {
+      setFields(mockFields);
+      setDevices(withWifiDemoDevice(mockDevices));
+      setPlans(mockPlans);
+      setIsFieldsLoading(false);
+      return;
+    }
+
+    if (!isAuthenticated) {
+      setFields([]);
+      setDevices([]);
+      setPlans([]);
+      setIsFieldsLoading(false);
+      return;
+    }
+
+    void refreshFields();
+    void refreshDevices();
+    void refreshPlans();
+  }, [isAuthenticated, user?.id]);
 
   const login = async (username: string, password: string) => {
     if (!supabase) {
@@ -149,8 +254,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       login,
       logout,
       fields, setFields,
+      isFieldsLoading,
+      refreshFields,
       devices, setDevices,
+      refreshDevices,
       plans, setPlans,
+      refreshPlans,
       strategies, setStrategies,
       selectedFieldId, setSelectedFieldId,
     }}>

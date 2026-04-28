@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import {
   Activity,
   AlertTriangle,
   Battery,
+  ChevronRight,
   Cpu,
   Droplets,
   Gauge,
@@ -13,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Device } from '../data/mockData';
-import { buildDeviceRiskItems } from '../data/workspaceMock';
+import { getWifiDemoMissingConfig, wifiDemoDevice } from '../../lib/wifiDemoConfig';
 
 const TYPE_ICONS: Record<string, any> = {
   valve: Droplets,
@@ -159,6 +161,79 @@ function DeviceCard({
   );
 }
 
+function WifiDemoDeviceCard() {
+  const missingConfig = getWifiDemoMissingConfig();
+  const isReady = missingConfig.length === 0;
+  const status = isReady ? STATUS_CONFIG.online : STATUS_CONFIG.offline;
+
+  return (
+    <Link
+      to="/wifi-device-demo"
+      className="rounded-2xl p-5 transition-all block"
+      style={{
+        background: '#ffffff',
+        border: `1px solid ${isReady ? '#e2e8f0' : '#fecaca'}`,
+        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+      }}
+    >
+      <div className="flex items-start gap-3 mb-4">
+        <div
+          className="flex items-center justify-center rounded-xl shrink-0"
+          style={{ width: 44, height: 44, background: '#0ea5e915', border: '1px solid #0ea5e930' }}
+        >
+          <Wifi size={22} color="#0ea5e9" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <h3 style={{ color: '#0f172a', fontSize: 14, fontWeight: 600 }} className="truncate">
+              WC800WF
+            </h3>
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full shrink-0"
+              style={{ background: status.bg, color: status.color, fontSize: 11, border: `1px solid ${status.border}` }}
+            >
+              <status.icon size={10} />
+              {isReady ? '已接入' : '待配置'}
+            </span>
+          </div>
+          <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>{wifiDemoDevice.model}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <div className="p-2.5 rounded-xl" style={{ background: '#f8fafc' }}>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 2 }}>设备类型</div>
+          <div style={{ color: '#0ea5e9', fontSize: 13, fontWeight: 500 }}>Wi-Fi 控制器</div>
+        </div>
+        <div className="p-2.5 rounded-xl" style={{ background: '#f8fafc' }}>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 2 }}>站点数量</div>
+          <div style={{ color: '#374151', fontSize: 13, fontWeight: 500 }}>{wifiDemoDevice.stationList.length || '—'}</div>
+        </div>
+        <div className="p-2.5 rounded-xl" style={{ background: '#f8fafc' }}>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 2 }}>所属地块</div>
+          <div style={{ color: '#374151', fontSize: 12 }} className="truncate">
+            {wifiDemoDevice.fieldName || '未配置'}
+          </div>
+        </div>
+        <div className="p-2.5 rounded-xl" style={{ background: '#f8fafc' }}>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 2 }}>设备 ID</div>
+          <div style={{ color: '#374151', fontSize: 12 }} className="truncate">
+            {wifiDemoDevice.deviceId || '未配置'}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-2 pt-3"
+        style={{ borderTop: '1px solid #f1f5f9', color: '#64748b', fontSize: 12 }}
+      >
+        <span>{isReady ? '查看实时 MQTT 状态与控制' : `缺少配置：${missingConfig.join('、')}`}</span>
+        <ChevronRight size={16} color="#94a3b8" />
+      </div>
+    </Link>
+  );
+}
+
 export function Devices() {
   const { devices, fields } = useApp();
   const [search, setSearch] = useState('');
@@ -167,6 +242,9 @@ export function Devices() {
 
   const getFieldName = (device: Device) => {
     if (device.fieldId) return fields.find((field) => field.id === device.fieldId)?.name ?? '—';
+    if (device.bindings && device.bindings.length > 0) {
+      return fields.find((field) => field.id === device.bindings[0].fieldId)?.name ?? '—';
+    }
     return '未绑定';
   };
 
@@ -174,6 +252,12 @@ export function Devices() {
     if (device.zoneId) {
       for (const field of fields) {
         const zone = field.zones.find((item) => item.id === device.zoneId);
+        if (zone) return zone.name;
+      }
+    }
+    if (device.bindings && device.bindings.length > 0) {
+      for (const field of fields) {
+        const zone = field.zones.find((item) => item.id === device.bindings![0].zoneId);
         if (zone) return zone.name;
       }
     }
@@ -205,7 +289,16 @@ export function Devices() {
   const weakSignalCount = devices.filter(
     (device) => typeof device.signalStrength === 'number' && device.signalStrength > 0 && device.signalStrength < 55,
   ).length;
-  const deviceRiskItems = buildDeviceRiskItems(devices, fields);
+  const wifiDemoMissingConfig = getWifiDemoMissingConfig();
+  const showWifiDemoCard =
+    (filterStatus === 'all' || (wifiDemoMissingConfig.length === 0 ? 'online' : 'offline') === filterStatus) &&
+    (filterType === 'all' || filterType === 'controller') &&
+    (!search ||
+      wifiDemoDevice.deviceName.includes(search) ||
+      wifiDemoDevice.model.includes(search) ||
+      wifiDemoDevice.deviceId.includes(search) ||
+      wifiDemoDevice.fieldName.includes(search));
+  const visibleDeviceCount = filtered.length + (showWifiDemoCard ? 1 : 0);
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: '#f0f4f8' }}>
@@ -214,7 +307,7 @@ export function Devices() {
           <div>
             <h1 style={{ color: '#0f172a', fontSize: 20, fontWeight: 700 }}>设备中心</h1>
             <p style={{ color: '#94a3b8', fontSize: 13, marginTop: 2 }}>
-              基于模拟数据查看现场链路、供水执行和巡检优先级
+              查看现场设备状态、链路质量和接入设备详情
             </p>
           </div>
         </div>
@@ -226,62 +319,27 @@ export function Devices() {
           <StatCard title="弱信号点位" value={`${weakSignalCount}`} sub="可能影响指令下发" color="#8b5cf6" />
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
-          <div className="flex items-center gap-4">
-            {[
-              { key: 'online', label: '在线', count: statusCounts.online, color: '#22c55e', bg: '#f0fdf4' },
-              { key: 'alarm', label: '告警', count: statusCounts.alarm, color: '#ef4444', bg: '#fef2f2' },
-              { key: 'offline', label: '离线', count: statusCounts.offline, color: '#94a3b8', bg: '#f8fafc' },
-            ].map(({ key, label, count, color, bg }) => (
-              <button
-                key={key}
-                onClick={() => setFilterStatus(filterStatus === key ? 'all' : key)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all"
-                style={{
-                  background: filterStatus === key ? bg : '#f8fafc',
-                  border: `1px solid ${filterStatus === key ? color : '#e2e8f0'}`,
-                }}
-              >
-                <div className="rounded-full" style={{ width: 8, height: 8, background: color }} />
-                <span style={{ color: filterStatus === key ? color : '#64748b', fontSize: 13, fontWeight: 500 }}>
-                  {label} {count}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div
-            className="rounded-2xl p-4"
-            style={{ background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
-          >
-            <div style={{ color: '#0f172a', fontSize: 14, fontWeight: 600, marginBottom: 10 }}>巡检优先级</div>
-            <div className="flex flex-col gap-2">
-              {deviceRiskItems.slice(0, 3).map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-xl p-3"
-                  style={{
-                    background:
-                      item.severity === 'critical'
-                        ? '#fef2f2'
-                        : item.severity === 'warning'
-                          ? '#fffbeb'
-                          : '#f0f9ff',
-                    border: `1px solid ${
-                      item.severity === 'critical'
-                        ? '#fecaca'
-                        : item.severity === 'warning'
-                          ? '#fde68a'
-                          : '#bae6fd'
-                    }`,
-                  }}
-                >
-                  <div style={{ color: '#0f172a', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{item.title}</div>
-                  <div style={{ color: '#64748b', fontSize: 12 }}>{item.description}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="flex items-center gap-4">
+          {[
+            { key: 'online', label: '在线', count: statusCounts.online, color: '#22c55e', bg: '#f0fdf4' },
+            { key: 'alarm', label: '告警', count: statusCounts.alarm, color: '#ef4444', bg: '#fef2f2' },
+            { key: 'offline', label: '离线', count: statusCounts.offline, color: '#94a3b8', bg: '#f8fafc' },
+          ].map(({ key, label, count, color, bg }) => (
+            <button
+              key={key}
+              onClick={() => setFilterStatus(filterStatus === key ? 'all' : key)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all"
+              style={{
+                background: filterStatus === key ? bg : '#f8fafc',
+                border: `1px solid ${filterStatus === key ? color : '#e2e8f0'}`,
+              }}
+            >
+              <div className="rounded-full" style={{ width: 8, height: 8, background: color }} />
+              <span style={{ color: filterStatus === key ? color : '#64748b', fontSize: 13, fontWeight: 500 }}>
+                {label} {count}
+              </span>
+            </button>
+          ))}
         </div>
 
         <div className="flex items-center gap-3 mt-4">
@@ -324,18 +382,19 @@ export function Devices() {
               </button>
             ))}
           </div>
-          <span style={{ color: '#94a3b8', fontSize: 13 }}>共 {filtered.length} 台</span>
+          <span style={{ color: '#94a3b8', fontSize: 13 }}>共 {visibleDeviceCount} 台</span>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {filtered.length === 0 ? (
+        {visibleDeviceCount === 0 ? (
           <div className="flex flex-col items-center justify-center py-16" style={{ color: '#94a3b8' }}>
             <Cpu size={48} className="mb-4 opacity-30" />
             <p style={{ fontSize: 16 }}>未找到匹配设备</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+            {showWifiDemoCard && <WifiDemoDeviceCard />}
             {filtered.map((device) => (
               <DeviceCard
                 key={device.id}

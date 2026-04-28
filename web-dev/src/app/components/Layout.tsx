@@ -33,7 +33,7 @@ export function Layout() {
   if (!isAuthReady || !isAuthenticated) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#f0f4f8' }}>
+    <div className="flex h-screen min-h-screen overflow-hidden md:h-screen" style={{ background: '#f0f4f8' }}>
       {mobileMenuOpen && (
         <div
           className="fixed inset-0 z-40 md:hidden"
@@ -177,7 +177,7 @@ export function Layout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex flex-1 min-h-0 flex-col overflow-hidden">
         <div
           className="sticky top-0 z-30 flex items-center justify-between px-4 py-3 md:hidden"
           style={{ background: '#ffffff', borderBottom: '1px solid #e2e8f0' }}
@@ -198,7 +198,9 @@ export function Layout() {
             <LogOut size={16} />
           </button>
         </div>
-        <Outlet />
+        <div className="flex h-full flex-1 min-h-0 [&>*]:h-full [&>*]:min-h-0 [&>*]:flex-1">
+          <Outlet />
+        </div>
       </main>
     </div>
   );
