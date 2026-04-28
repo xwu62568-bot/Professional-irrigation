@@ -1,0 +1,45 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: irrigation-nginx
+    restart: unless-stopped
+    depends_on:
+      - execution-service
+      - mqtt-gateway-service
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/irrigation.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/certs:/etc/nginx/certs:ro
+
+  execution-service:
+    build:
+      context: ./services/execution-service
+    container_name: irrigation-execution-service
+    restart: unless-stopped
+    env_file:
+      - ./services/.env.production
+    volumes:
+      - ./services/certs:/app/certs:ro
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4310
+      MQTT_GATEWAY_BASE_URL: http://mqtt-gateway-service:4320
+    expose:
+      - "4310"
+
+  mqtt-gateway-service:
+    build:
+      context: ./services/mqtt-gateway-service
+    container_name: irrigation-mqtt-gateway-service
+    restart: unless-stopped
+    env_file:
+      - ./services/.env.production
+    volumes:
+      - ./services/certs:/app/certs:ro
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4320
+    expose:
+      - "4320"

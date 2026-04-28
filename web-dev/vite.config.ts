@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 
 const repoName = 'Professional-irrigation'
 const isGitHubActions = process.env.GITHUB_ACTIONS === 'true'
+const githubRepository = process.env.GITHUB_REPOSITORY?.split('/')[1] || repoName
+const publicBase = process.env.VITE_PUBLIC_BASE || (isGitHubActions ? `/${githubRepository}/` : '/')
 
 function figmaAssetResolver() {
   return {
@@ -19,7 +21,7 @@ function figmaAssetResolver() {
 }
 
 export default defineConfig({
-  base: isGitHubActions ? `/${repoName}/` : '/',
+  base: publicBase,
   plugins: [
     figmaAssetResolver(),
     // The React and Tailwind plugins are both required for Make, even if

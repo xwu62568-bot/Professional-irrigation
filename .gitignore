@@ -7,3 +7,6 @@ web/dist/
 web-dev/node_modules/
 web-dev/dist/
 web-dev/.env
+services/.env
+services/.env.production
+deploy/nginx/certs/

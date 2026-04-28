@@ -45,8 +45,15 @@ jobs:
         env:
           GITHUB_ACTIONS: 'true'
           VITE_USE_HASH_ROUTER: 'true'
-          VITE_SUPABASE_URL: https://obmivbdzncewlaybtjuc.supabase.co
-          VITE_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ibWl2YmR6bmNld2xheWJ0anVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MjU2MzAsImV4cCI6MjA5MjUwMTYzMH0.yhp4i_dBVmkP9MXKyIOIrLdyJ2ZC6rDDODSWlmq8GOc'
+          VITE_PUBLIC_BASE: /${{ github.event.repository.name }}/
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_AMAP_KEY: ${{ vars.VITE_AMAP_KEY }}
+          VITE_AMAP_SECURITY_JS_CODE: ${{ vars.VITE_AMAP_SECURITY_JS_CODE }}
+          VITE_EXECUTION_SERVICE_URL: ${{ vars.VITE_EXECUTION_SERVICE_URL }}
+          VITE_MQTT_GATEWAY_URL: ${{ vars.VITE_MQTT_GATEWAY_URL }}
+          VITE_WIFI_DEMO_DEVICE_ID: ${{ vars.VITE_WIFI_DEMO_DEVICE_ID }}
+          VITE_WIFI_DEMO_STATIONS: ${{ vars.VITE_WIFI_DEMO_STATIONS }}
         run: npm run build
 
       - name: Upload Pages artifact
