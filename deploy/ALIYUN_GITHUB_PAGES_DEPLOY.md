@@ -46,6 +46,16 @@ Secrets:
 
 ## 2. 阿里云 ECS
 
+当前生产 ECS：
+
+- 公网 IP：`47.99.39.55`
+- SSH 用户：`root`
+- SSH 端口：`22`
+- 服务器项目目录：`/opt/irrigation2.0`
+- Docker Compose 文件：`/opt/irrigation2.0/deploy/docker-compose.aliyun.yml`
+- Compose project：`irrigation20`
+- 登录密码：不要写入仓库文档，查看本地密码管理/运维记录
+
 建议：
 
 - 系统：`Ubuntu 22.04`
@@ -54,12 +64,39 @@ Secrets:
 
 ### 2.1 上传项目
 
-在 ECS 上执行：
+当前服务器不是 git 工作区，采用本地打包上传部署。
+
+本地打包：
 
 ```bash
-git clone <你的仓库地址> irrigation2.0
-cd irrigation2.0
+tar --no-xattrs \
+  --exclude='*/node_modules/*' \
+  --exclude='web-dev/dist/*' \
+  --exclude='web/dist/*' \
+  -czf /tmp/irrigation-ecs-deploy.tgz \
+  deploy services
 ```
+
+上传到 ECS：
+
+```bash
+scp /tmp/irrigation-ecs-deploy.tgz root@47.99.39.55:/tmp/irrigation-ecs-deploy.tgz
+```
+
+登录 ECS：
+
+```bash
+ssh root@47.99.39.55
+```
+
+在 ECS 上解压到生产目录：
+
+```bash
+mkdir -p /opt/irrigation2.0
+tar -xzf /tmp/irrigation-ecs-deploy.tgz -C /opt/irrigation2.0
+```
+
+注意：不要用本地 `services/.env` 覆盖线上 `services/.env.production`。线上密钥只维护在 ECS 的 `/opt/irrigation2.0/services/.env.production`。
 
 ### 2.2 准备生产环境文件
 
@@ -74,9 +111,11 @@ cp services/.env.production.example services/.env.production
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `WIFI_DEMO_MQTT_ACCOUNT`
+- `WIFI_DEMO_MQTT_CLIENT_ID`，当前 Hyeco broker 建议与 `WIFI_DEMO_MQTT_ACCOUNT` 保持一致
 - `WIFI_DEMO_MQTT_USER_ID`
 - `WIFI_DEMO_MQTT_PASSWORD`
 - `WIFI_DEMO_DEVICE_ID`
+- `WIFI_DEMO_MQTT_IDLE_DISCONNECT_MS=6000`
 
 ### 2.3 准备 MQTT 证书
 
@@ -109,15 +148,33 @@ server_name api.example.com;
 ### 2.5 启动服务
 
 ```bash
-docker compose -f deploy/docker-compose.aliyun.yml up -d --build
+cd /opt/irrigation2.0
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  up -d --build
 ```
 
 查看状态：
 
 ```bash
-docker compose -f deploy/docker-compose.aliyun.yml ps
-docker compose -f deploy/docker-compose.aliyun.yml logs -f execution-service
-docker compose -f deploy/docker-compose.aliyun.yml logs -f mqtt-gateway-service
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  ps
+
+docker logs -f irrigation-execution-service
+docker logs -f irrigation-mqtt-gateway-service
+```
+
+绕过 Nginx 直接检查容器健康状态：
+
+```bash
+MQTT_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' irrigation-mqtt-gateway-service)
+EXEC_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' irrigation-execution-service)
+
+curl -s "http://$MQTT_IP:4320/health"
+curl -s "http://$EXEC_IP:4310/health"
 ```
 
 ## 3. 域名
@@ -150,18 +207,41 @@ docker compose -f deploy/docker-compose.aliyun.yml logs -f mqtt-gateway-service
 重启：
 
 ```bash
-docker compose -f deploy/docker-compose.aliyun.yml restart
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  restart
 ```
 
 更新代码并重新发布：
 
 ```bash
-git pull
-docker compose -f deploy/docker-compose.aliyun.yml up -d --build
+# 本地
+tar --no-xattrs \
+  --exclude='*/node_modules/*' \
+  --exclude='web-dev/dist/*' \
+  --exclude='web/dist/*' \
+  -czf /tmp/irrigation-ecs-deploy.tgz \
+  deploy services
+scp /tmp/irrigation-ecs-deploy.tgz root@47.99.39.55:/tmp/irrigation-ecs-deploy.tgz
+
+# ECS
+ssh root@47.99.39.55
+cd /opt/irrigation2.0
+tar -xzf /tmp/irrigation-ecs-deploy.tgz -C /opt/irrigation2.0
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  up -d --build
 ```
 
 停止：
 
 ```bash
-docker compose -f deploy/docker-compose.aliyun.yml down
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  down
 ```
+root
+v6&&Rb/4*3@eqsn

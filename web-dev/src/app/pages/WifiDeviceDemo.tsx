@@ -40,6 +40,31 @@ function valveStatusLabel(status: string) {
   return '未同步';
 }
 
+function connectionStatusMeta(state: WifiDemoDeviceState) {
+  const { connectionStatus, online, lastMessageAt } = state;
+  if (online && lastMessageAt) {
+    return {
+      label: connectionStatus === 'connected' ? '已连接' : '已同步',
+      detail: connectionStatus === 'connected' ? 'MQTT 保持连接' : '设备已回复，MQTT 当前空闲',
+      color: '#16a34a',
+      icon: Wifi,
+    };
+  }
+  if (connectionStatus === 'connected') {
+    return { label: '已连接', detail: 'MQTT 保持连接', color: '#16a34a', icon: Wifi };
+  }
+  if (connectionStatus === 'connecting') {
+    return { label: '连接中', detail: '正在连接 MQTT broker', color: '#0ea5e9', icon: Wifi };
+  }
+  if (connectionStatus === 'error') {
+    return { label: '连接异常', detail: state.errorMessage || 'MQTT 连接失败', color: '#ef4444', icon: WifiOff };
+  }
+  if (connectionStatus === 'config-missing') {
+    return { label: '配置缺失', detail: '请补充 Wi-Fi 设备配置', color: '#f59e0b', icon: WifiOff };
+  }
+  return { label: '未同步', detail: '尚未收到设备回复', color: '#94a3b8', icon: WifiOff };
+}
+
 export function WifiDeviceDemo() {
   const [state, setState] = useState<WifiDemoDeviceState>(initialState);
   const [durationByStation, setDurationByStation] = useState<Record<number, string>>({});
@@ -55,6 +80,8 @@ export function WifiDeviceDemo() {
 
   const missingConfig = useMemo(() => getWifiDemoMissingConfig(), []);
   const topics = useMemo(() => getWifiDemoTopics(), []);
+  const connectionMeta = connectionStatusMeta(state);
+  const ConnectionIcon = connectionMeta.icon;
 
   return (
     <div className="flex flex-col h-full overflow-auto" style={{ background: '#f0f4f8' }}>
@@ -104,10 +131,13 @@ export function WifiDeviceDemo() {
 
         <div className="grid gap-4 md:grid-cols-4">
           <div className="rounded-2xl p-5" style={{ background: '#ffffff', border: '1px solid #e2e8f0' }}>
-            <div style={{ color: '#64748b', fontSize: 12 }}>连接状态</div>
-            <div className="flex items-center gap-2 mt-3" style={{ color: '#0f172a', fontSize: 22, fontWeight: 700 }}>
-              {state.online ? <Wifi size={22} color="#16a34a" /> : <WifiOff size={22} color="#94a3b8" />}
-              {state.connectionStatus}
+            <div style={{ color: '#64748b', fontSize: 12 }}>设备通信状态</div>
+            <div className="flex items-center gap-2 mt-3" style={{ color: connectionMeta.color, fontSize: 22, fontWeight: 700 }}>
+              <ConnectionIcon size={22} color={connectionMeta.color} />
+              {connectionMeta.label}
+            </div>
+            <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 6 }}>
+              {connectionMeta.detail} · MQTT：{state.connectionStatus}
             </div>
           </div>
           <div className="rounded-2xl p-5" style={{ background: '#ffffff', border: '1px solid #e2e8f0' }}>

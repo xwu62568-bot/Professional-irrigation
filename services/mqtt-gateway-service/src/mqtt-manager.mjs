@@ -25,6 +25,15 @@ function validateConfig(config) {
   }
 }
 
+function buildClientId(config) {
+  const configured = String(config.mqttClientId ?? '').trim();
+  if (configured) {
+    return configured;
+  }
+
+  return config.mqttAccount;
+}
+
 function getTopics(config) {
   return {
     deviceInfoPublish: `${config.topicPrefix}${config.topicDeviceInfo}${config.deviceId}`,
@@ -51,6 +60,8 @@ export function createMqttGateway(config, logger = console) {
   let mqttClient = null;
   let lastControlCommand = null;
   let connectPromise = null;
+  let intentionalDisconnect = false;
+  let idleDisconnectTimer = null;
 
   function log(event, payload) {
     logger.log(`[mqtt-gateway-service] ${event}`, payload ?? '');
@@ -114,8 +125,43 @@ export function createMqttGateway(config, logger = console) {
     }
   }
 
+  function clearIdleDisconnectTimer() {
+    if (idleDisconnectTimer) {
+      clearTimeout(idleDisconnectTimer);
+      idleDisconnectTimer = null;
+    }
+  }
+
+  function disconnectMqtt(reason = 'idle') {
+    clearIdleDisconnectTimer();
+    if (!mqttClient) {
+      state.mqttConnected = false;
+      setState({ connectionStatus: 'idle' });
+      return;
+    }
+
+    intentionalDisconnect = true;
+    const client = mqttClient;
+    mqttClient = null;
+    state.mqttConnected = false;
+    lastControlCommand = null;
+    setState({ connectionStatus: 'idle' });
+    log('mqtt:disconnect', { reason });
+    client.end(true, () => {
+      intentionalDisconnect = false;
+    });
+  }
+
+  function scheduleIdleDisconnect(reason) {
+    clearIdleDisconnectTimer();
+    idleDisconnectTimer = setTimeout(() => {
+      disconnectMqtt(reason);
+    }, Number(config.idleDisconnectMs ?? 6000));
+  }
+
   async function ensureConnected() {
     if (state.mqttConnected) {
+      clearIdleDisconnectTimer();
       return;
     }
     if (connectPromise) {
@@ -123,28 +169,38 @@ export function createMqttGateway(config, logger = console) {
     }
 
     validateConfig(config);
+    const clientId = buildClientId(config);
 
     connectPromise = new Promise((resolve, reject) => {
+      disconnectMqtt('replace-client');
+
       mqttClient = mqtt.connect({
         host: config.brokerUrl,
         port: config.brokerPort,
         protocol: 'mqtts',
-        clientId: config.mqttAccount,
+        clientId,
         username: config.mqttAccount,
         password: config.mqttPassword,
         ca: readRequiredFile(config.caCertPath),
         pfx: readRequiredFile(config.clientCertPath),
         passphrase: config.clientCertPassphrase,
         rejectUnauthorized: false,
-        reconnectPeriod: 3000,
+        reconnectPeriod: 0,
         connectTimeout: 10000,
       });
 
       setState({ connectionStatus: 'connecting', errorMessage: '' });
+      log('mqtt:connecting', {
+        host: config.brokerUrl,
+        port: config.brokerPort,
+        clientId,
+        username: config.mqttAccount,
+      });
 
       mqttClient.once('connect', () => {
         const topics = getTopics(config);
         state.mqttConnected = true;
+        lastControlCommand = null;
         mqttClient.subscribe([
           topics.deviceInfoReplySubscribe,
           topics.deviceControlReplySubscribe,
@@ -158,7 +214,21 @@ export function createMqttGateway(config, logger = console) {
       mqttClient.on('close', () => {
         state.mqttConnected = false;
         lastControlCommand = null;
-        setState({ connectionStatus: 'idle', online: false });
+        if (intentionalDisconnect) {
+          return;
+        }
+        setState({
+          connectionStatus: 'idle',
+          errorMessage: state.errorMessage,
+        });
+      });
+
+      mqttClient.on('reconnect', () => {
+        state.mqttConnected = false;
+        setState({
+          connectionStatus: 'connecting',
+          errorMessage: '',
+        });
       });
 
       mqttClient.on('error', (error) => {
@@ -167,9 +237,10 @@ export function createMqttGateway(config, logger = console) {
         setState({
           connectionStatus: 'error',
           errorMessage: error.message || 'MQTT 连接失败',
-          online: false,
         });
-        reject(error);
+        if (connectPromise) {
+          reject(error);
+        }
       });
 
       mqttClient.on('message', (topic, payload) => {
@@ -202,6 +273,7 @@ export function createMqttGateway(config, logger = console) {
     };
     mqttClient.publish(topics.deviceInfoPublish, JSON.stringify(payload));
     log('mqtt:publish:device-info', { topic: topics.deviceInfoPublish, payload });
+    scheduleIdleDisconnect('device-info-request-complete');
     return { ok: true };
   }
 
@@ -223,6 +295,7 @@ export function createMqttGateway(config, logger = console) {
     };
     mqttClient.publish(topics.deviceControlPublish, JSON.stringify(payload));
     log('mqtt:publish:control', { topic: topics.deviceControlPublish, payload });
+    scheduleIdleDisconnect('control-command-complete');
     return { ok: true, topic: topics.deviceControlPublish, payload };
   }
 
@@ -237,5 +310,6 @@ export function createMqttGateway(config, logger = console) {
     ensureConnected,
     requestDeviceInfo,
     sendControl,
+    disconnectMqtt,
   };
 }

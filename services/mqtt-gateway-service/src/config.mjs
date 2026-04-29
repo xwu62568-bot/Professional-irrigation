@@ -5,6 +5,7 @@ export function loadConfig() {
     brokerUrl: process.env.WIFI_DEMO_MQTT_HOST ?? process.env.MQTT_BROKER_HOST ?? 'broker.hyecosmart.com',
     brokerPort: Number(process.env.WIFI_DEMO_MQTT_PORT ?? process.env.MQTT_BROKER_PORT ?? 9883),
     mqttAccount: process.env.WIFI_DEMO_MQTT_ACCOUNT ?? '',
+    mqttClientId: process.env.WIFI_DEMO_MQTT_CLIENT_ID ?? '',
     mqttUserId: process.env.WIFI_DEMO_MQTT_USER_ID ?? '',
     mqttPassword: process.env.WIFI_DEMO_MQTT_PASSWORD ?? '',
     deviceId: process.env.WIFI_DEMO_DEVICE_ID ?? '',
@@ -17,6 +18,7 @@ export function loadConfig() {
     caCertPath: process.env.WIFI_DEMO_CA_CERT_PATH ?? '../certs/hyecosmart-ca.der',
     clientCertPath: process.env.WIFI_DEMO_CLIENT_CERT_PATH ?? '../certs/hyecosmart-client.p12',
     clientCertPassphrase: process.env.WIFI_DEMO_CLIENT_CERT_PASSPHRASE ?? '',
+    idleDisconnectMs: Number(process.env.WIFI_DEMO_MQTT_IDLE_DISCONNECT_MS ?? 6000),
     serviceName: 'mqtt-gateway-service',
   };
 }

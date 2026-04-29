@@ -75,6 +75,7 @@ export class WifiDemoMqttClient {
       errorMessage: '',
     });
 
+    await this.requestDeviceInfo();
     await this.refreshState();
     this.startPolling();
   }
@@ -173,10 +174,7 @@ export class WifiDemoMqttClient {
 
     this.emit({
       ...payload,
-      connectionStatus:
-        payload.connectionStatus === 'idle'
-          ? 'connected'
-          : payload.connectionStatus ?? 'connected',
+      connectionStatus: payload.connectionStatus ?? 'idle',
       errorMessage: payload.errorMessage ?? '',
     });
   }

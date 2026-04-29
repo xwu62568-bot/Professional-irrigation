@@ -54,6 +54,7 @@ import {
 const STATUS_COLORS: Record<Field['status'], string> = { normal: '#22c55e', warning: '#f59e0b', irrigating: '#2563eb', alarm: '#ef4444' };
 const STATUS_LABELS: Record<Field['status'], string> = { normal: '正常', warning: '预警', irrigating: '浇灌中', alarm: '告警' };
 const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', running: '#22c55e', alarm: '#ef4444' };
+const ZONE_FILL_OPACITY: Record<string, number> = { idle: 0.2, running: 0.3, alarm: 0.32 };
 const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923];
 const OVERVIEW_MAP_CENTER_KEY = 'overview-map:last-center';
 
@@ -515,7 +516,7 @@ export function Overview() {
         strokeColor: statusColor,
         strokeWeight: field.status === 'normal' ? 2 : 3,
         fillColor: statusColor,
-        fillOpacity: field.status === 'normal' ? 0.24 : 0.34,
+        fillOpacity: field.status === 'normal' ? 0.12 : 0.18,
         zIndex: 20,
       });
       polygon.on('mouseover', (event: any) => {
@@ -545,11 +546,12 @@ export function Overview() {
         const zonePolygon = new AMap.Polygon({
           path: zone.geoBoundary,
           strokeColor: ZONE_STATUS_COLORS[zone.status],
-          strokeWeight: zone.status === 'idle' ? 1 : 2,
+          strokeWeight: zone.status === 'idle' ? 2 : 3,
+          strokeOpacity: 0.9,
           strokeStyle: 'dashed',
-          fillOpacity: zone.status === 'running' ? 0.08 : 0,
-          fillColor: '#2563eb',
-          zIndex: 25,
+          fillOpacity: ZONE_FILL_OPACITY[zone.status] ?? 0.2,
+          fillColor: ZONE_STATUS_COLORS[zone.status],
+          zIndex: 35,
         });
         zonePolygon.setMap(map);
         nextOverlays.push(zonePolygon);
@@ -557,16 +559,16 @@ export function Overview() {
         const zoneLabel = new AMap.Text({
           text: zone.name,
           position: zone.geoCenter ?? zone.geoBoundary[0],
-          offset: new AMap.Pixel(-24, -12),
+          offset: new AMap.Pixel(-30, -14),
           style: {
-            padding: '2px 7px',
+            padding: '3px 9px',
             borderRadius: '999px',
-            border: `1px solid ${ZONE_STATUS_COLORS[zone.status]}40`,
-            background: 'rgba(255,255,255,0.86)',
+            border: `1px solid ${ZONE_STATUS_COLORS[zone.status]}66`,
+            background: 'rgba(255,255,255,0.93)',
             color: '#0f172a',
-            fontSize: '11px',
+            fontSize: '12px',
             fontWeight: zone.status !== 'idle' ? '700' : '600',
-            boxShadow: '0 6px 14px rgba(15,23,42,0.12)',
+            boxShadow: '0 8px 18px rgba(15,23,42,0.18)',
           },
         });
         zoneLabel.setMap(map);
@@ -883,14 +885,25 @@ export function Overview() {
                         <span>地块填充：{label}</span>
                       </div>
                     ))}
-                    <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
-                      <span style={{ width: 18, height: 0, borderTop: `2px dashed ${ZONE_STATUS_COLORS.running}` }} />
-                      <span>分区浇灌中</span>
-                    </div>
-                    <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
-                      <span style={{ width: 18, height: 0, borderTop: `2px dashed ${ZONE_STATUS_COLORS.alarm}` }} />
-                      <span>分区告警</span>
-                    </div>
+                    {[
+                      ['idle', '分区填充：待机'],
+                      ['running', '分区填充：浇灌中'],
+                      ['alarm', '分区填充：告警'],
+                    ].map(([status, label]) => (
+                      <div key={status} className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
+                        <span
+                          className="inline-block rounded-sm"
+                          style={{
+                            width: 14,
+                            height: 9,
+                            background: ZONE_STATUS_COLORS[status],
+                            opacity: ZONE_FILL_OPACITY[status] ?? 0.2,
+                            border: `2px solid ${ZONE_STATUS_COLORS[status]}`,
+                          }}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    ))}
                     <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
                       <span className="inline-flex items-center justify-center rounded-full" style={{ width: 16, height: 16, background: '#22c55e', color: '#fff', fontSize: 9, fontWeight: 700 }}>V</span>
                       <span>在线设备点</span>

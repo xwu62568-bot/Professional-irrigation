@@ -55,6 +55,12 @@ const ZONE_STATUS_COLORS = {
   alarm: '#ef4444',
 } as const;
 
+const ZONE_FILL_OPACITY = {
+  idle: 0.2,
+  running: 0.3,
+  alarm: 0.32,
+} as const;
+
 const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923];
 const LAST_MAP_CENTER_KEY = 'field-map:last-center';
 
@@ -553,7 +559,7 @@ export function FieldMap() {
           strokeColor: STATUS_COLORS[field.status],
           strokeWeight: fieldSelected ? 4 : 2,
           fillColor: STATUS_COLORS[field.status],
-          fillOpacity: fieldSelected ? 0.42 : field.status === 'normal' ? 0.24 : 0.34,
+          fillOpacity: fieldSelected ? 0.3 : field.status === 'normal' ? 0.12 : 0.18,
           zIndex: fieldSelected ? 30 : 20,
         });
 
@@ -579,11 +585,12 @@ export function FieldMap() {
         const zonePolygon = new AMap.Polygon({
           path: toAmapPath(zone.geoBoundary),
           strokeColor: ZONE_STATUS_COLORS[zone.status],
-          strokeWeight: zoneSelected ? 3 : 2,
+          strokeWeight: zoneSelected ? 4 : 3,
+          strokeOpacity: zoneSelected ? 1 : 0.9,
           strokeStyle: 'dashed',
-          fillColor: '#2563eb',
-          fillOpacity: zoneSelected ? 0.2 : 0.08,
-          zIndex: zoneSelected ? 35 : 25,
+          fillColor: ZONE_STATUS_COLORS[zone.status],
+          fillOpacity: zoneSelected ? 0.42 : ZONE_FILL_OPACITY[zone.status],
+          zIndex: zoneSelected ? 45 : 35,
         });
 
         zonePolygon.on('click', () => {
@@ -597,16 +604,16 @@ export function FieldMap() {
         const zoneLabel = new AMap.Text({
           text: zone.name,
           position: zoneLabelPosition,
-          offset: new AMap.Pixel(-24, -12),
+          offset: new AMap.Pixel(-30, -14),
           style: {
-            padding: '2px 7px',
+            padding: '3px 9px',
             borderRadius: '999px',
-            border: `1px solid ${ZONE_STATUS_COLORS[zone.status]}40`,
-            background: zoneSelected ? 'rgba(255,255,255,0.96)' : 'rgba(255,255,255,0.86)',
+            border: `1px solid ${ZONE_STATUS_COLORS[zone.status]}66`,
+            background: zoneSelected ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.93)',
             color: '#0f172a',
-            fontSize: '11px',
+            fontSize: '12px',
             fontWeight: zoneSelected || zone.status !== 'idle' ? '700' : '600',
-            boxShadow: '0 6px 14px rgba(15,23,42,0.12)',
+            boxShadow: '0 8px 18px rgba(15,23,42,0.18)',
           },
         });
         zoneLabel.on('click', () => {
