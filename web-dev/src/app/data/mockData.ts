@@ -7,7 +7,7 @@ export interface Field {
   area: number;
   kc: number;
   irrigationEfficiency: number;
-  status: 'normal' | 'warning' | 'alarm';
+  status: 'normal' | 'warning' | 'irrigating' | 'alarm';
   soilMoisture: number;
   soilTemperature: number;
   flowRate: number;

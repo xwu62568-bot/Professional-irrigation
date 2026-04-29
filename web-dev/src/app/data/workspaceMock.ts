@@ -112,7 +112,7 @@ export function buildDashboardSnapshot(
       (sum, field) => sum + field.zones.filter((zone) => zone.status === 'running').length,
       0,
     ),
-    attentionFields: fields.filter((field) => field.status !== 'normal').length,
+    attentionFields: fields.filter((field) => field.status !== 'normal' && field.status !== 'irrigating').length,
     averageBatteryLevel: avg(batteryValues),
     averageEt0: avg(fields.map((field) => field.et0)),
     averageEtc: avg(fields.map((field) => field.etc)),

@@ -6,8 +6,8 @@ import { useApp } from '../context/AppContext';
 export function Login() {
   const { login, isAuthenticated, isAuthReady, authMode } = useApp();
   const navigate = useNavigate();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('88403120@qq.com');
+  const [password, setPassword] = useState('123456');
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);

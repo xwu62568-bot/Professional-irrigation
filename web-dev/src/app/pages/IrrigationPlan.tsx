@@ -336,7 +336,12 @@ export function IrrigationPlan() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="truncate" style={{ color: '#0f172a', fontSize: 15, fontWeight: 600 }}>{plan.name}</h3>
-                        {!plan.enabled && <Badge color="#94a3b8" bg="#f1f5f9">已停用</Badge>}
+                        <Badge
+                          color={plan.enabled ? '#16a34a' : '#94a3b8'}
+                          bg={plan.enabled ? '#f0fdf4' : '#f1f5f9'}
+                        >
+                          {plan.enabled ? '已启用' : '已停用'}
+                        </Badge>
                       </div>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <Badge color={MODE_COLORS[plan.mode]} bg={`${MODE_COLORS[plan.mode]}18`}>
@@ -356,7 +361,7 @@ export function IrrigationPlan() {
                         fontSize: 11,
                       }}
                     >
-                      {plan.enabled ? '停用' : '启用'}
+                      {plan.enabled ? '点击停用' : '点击启用'}
                     </button>
                   </div>
                 </div>

@@ -29,6 +29,13 @@ import { useApp } from '../context/AppContext';
 import type { Device, Field } from '../data/mockData';
 import { isAmapConfigured, loadAmap } from '../../lib/amap';
 import {
+  fetchEt0Forecast,
+  fetchWeatherOverview,
+  getForecastLocation,
+  type Et0ForecastDay,
+  type WeatherOverviewData,
+} from '../../lib/weatherEtService';
+import {
   etHistory,
   rainfallHistory,
   soilMoistureHistory,
@@ -44,9 +51,8 @@ import {
   buildWeatherOverview,
 } from '../data/workspaceMock';
 
-const STATUS_COLORS = { normal: '#22c55e', warning: '#f59e0b', alarm: '#ef4444' };
-const STATUS_LABELS = { normal: '正常', warning: '预警', alarm: '告警' };
-const FIELD_COLORS = ['#16a34a', '#0ea5e9', '#f59e0b', '#8b5cf6'];
+const STATUS_COLORS: Record<Field['status'], string> = { normal: '#22c55e', warning: '#f59e0b', irrigating: '#2563eb', alarm: '#ef4444' };
+const STATUS_LABELS: Record<Field['status'], string> = { normal: '正常', warning: '预警', irrigating: '浇灌中', alarm: '告警' };
 const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', running: '#22c55e', alarm: '#ef4444' };
 const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923];
 const OVERVIEW_MAP_CENTER_KEY = 'overview-map:last-center';
@@ -319,7 +325,7 @@ function PanelTitle({
 }
 
 export function Overview() {
-  const { fields, plans, strategies, devices } = useApp();
+  const { fields, plans, strategies, devices, refreshFields, refreshDevices, refreshPlans } = useApp();
   const navigate = useNavigate();
   const [refreshed, setRefreshed] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -328,6 +334,10 @@ export function Overview() {
   const [overviewMapReady, setOverviewMapReady] = useState(false);
   const [hoveredField, setHoveredField] = useState<(typeof fields)[number] | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
+  const [liveWeather, setLiveWeather] = useState<WeatherOverviewData | null>(null);
+  const [liveEt0Forecast, setLiveEt0Forecast] = useState<Et0ForecastDay[]>([]);
+  const [weatherEtError, setWeatherEtError] = useState('');
+  const [weatherEtRefreshKey, setWeatherEtRefreshKey] = useState(0);
 
   const now = new Date();
   const dateStr = now.toLocaleDateString('zh-CN', {
@@ -338,16 +348,68 @@ export function Overview() {
   });
   const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 
-  const dashboard = buildDashboardSnapshot(fields, devices);
-  const fieldRisks = buildFieldRisks(fields);
+  const liveEt0Today = liveEt0Forecast[0]?.et0;
+  const liveFields = fields.map((field) => {
+    if (typeof liveEt0Today !== 'number' || liveEt0Today <= 0) {
+      return liveWeather ? { ...field, rainfall24h: liveWeather.todayRainMm } : field;
+    }
+    return {
+      ...field,
+      et0: liveEt0Today,
+      etc: Number((liveEt0Today * field.kc).toFixed(2)),
+      rainfall24h: liveWeather?.todayRainMm ?? field.rainfall24h,
+    };
+  });
+  const dashboard = buildDashboardSnapshot(liveFields, devices);
+  const fieldRisks = buildFieldRisks(liveFields);
   const duePlans = buildDuePlans(fields, plans);
   const decision = buildDecisionSummary(fieldRisks, duePlans, strategies);
-  const weather = buildWeatherOverview(fields);
-  const sensorOverview = buildSensorOverview(fields, devices);
+  const fallbackWeather = buildWeatherOverview(fields);
+  const weather = liveWeather ?? fallbackWeather;
+  const sensorOverview = buildSensorOverview(liveFields, devices);
   const supplyOverview = buildSupplyOverview(devices, duePlans);
   const strategyState = buildStrategyState(strategies);
   const amapEnabled = isAmapConfigured();
   const initialFieldCenter = getInitialCenterFromFields(fields);
+  const forecastLocation = getForecastLocation(fields);
+  const forecastLocationKey = `${forecastLocation.lat.toFixed(4)},${forecastLocation.lng.toFixed(4)}`;
+  const chartRainfallHistory = liveWeather?.dailyRain.length
+    ? liveWeather.dailyRain.map((day) => ({
+      date: day.date.slice(5).replace('-', '/'),
+      rain: day.rainMm,
+    }))
+    : rainfallHistory;
+  const chartEtHistory = liveEt0Forecast.length
+    ? liveEt0Forecast.map((day) => ({
+      date: day.date.slice(5).replace('-', '/'),
+      et0: day.et0,
+      etc_avg: Number((day.et0 * (dashboard.averageEtc / Math.max(dashboard.averageEt0, 0.01))).toFixed(2)),
+    }))
+    : etHistory;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const { lat, lng } = forecastLocation;
+
+    setWeatherEtError('');
+    void Promise.all([
+      fetchWeatherOverview(lat, lng, controller.signal),
+      fetchEt0Forecast(lat, lng, controller.signal),
+    ])
+      .then(([nextWeather, nextEt0]) => {
+        setLiveWeather(nextWeather);
+        setLiveEt0Forecast(nextEt0);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setWeatherEtError(error instanceof Error ? error.message : '天气和 ET 数据读取失败');
+          setLiveWeather(null);
+          setLiveEt0Forecast([]);
+        }
+      });
+
+    return () => controller.abort();
+  }, [forecastLocationKey, weatherEtRefreshKey]);
 
   useEffect(() => {
     if (!amapEnabled || !mapContainerRef.current) {
@@ -439,21 +501,21 @@ export function Overview() {
 
     const nextOverlays: any[] = [];
 
-    fields.forEach((field, idx) => {
+    fields.forEach((field) => {
       if (!field.geoBoundary || field.geoBoundary.length < 3) {
         return;
       }
 
-      const color = FIELD_COLORS[idx % FIELD_COLORS.length];
       const runningZones = field.zones.filter((zone) => zone.status === 'running');
       const alarmZones = field.zones.filter((zone) => zone.status === 'alarm');
+      const statusColor = STATUS_COLORS[field.status];
 
       const polygon = new AMap.Polygon({
         path: field.geoBoundary,
-        strokeColor: STATUS_COLORS[field.status],
-        strokeWeight: 2,
-        fillColor: color,
-        fillOpacity: 0.18,
+        strokeColor: statusColor,
+        strokeWeight: field.status === 'normal' ? 2 : 3,
+        fillColor: statusColor,
+        fillOpacity: field.status === 'normal' ? 0.24 : 0.34,
         zIndex: 20,
       });
       polygon.on('mouseover', (event: any) => {
@@ -491,10 +553,28 @@ export function Overview() {
         });
         zonePolygon.setMap(map);
         nextOverlays.push(zonePolygon);
+
+        const zoneLabel = new AMap.Text({
+          text: zone.name,
+          position: zone.geoCenter ?? zone.geoBoundary[0],
+          offset: new AMap.Pixel(-24, -12),
+          style: {
+            padding: '2px 7px',
+            borderRadius: '999px',
+            border: `1px solid ${ZONE_STATUS_COLORS[zone.status]}40`,
+            background: 'rgba(255,255,255,0.86)',
+            color: '#0f172a',
+            fontSize: '11px',
+            fontWeight: zone.status !== 'idle' ? '700' : '600',
+            boxShadow: '0 6px 14px rgba(15,23,42,0.12)',
+          },
+        });
+        zoneLabel.setMap(map);
+        nextOverlays.push(zoneLabel);
       });
 
       const label = new AMap.Text({
-        text: alarmZones.length > 0 ? `${field.name} · ${alarmZones.length}区告警` : runningZones.length > 0 ? `${field.name} · ${runningZones.length}区运行` : field.name,
+        text: alarmZones.length > 0 ? `${field.name} · ${alarmZones.length}区告警` : runningZones.length > 0 ? `${field.name} · ${runningZones.length}区浇灌中` : field.name,
         position: field.geoCenter ?? field.geoBoundary[0],
         offset: new AMap.Pixel(-48, -34),
         style: {
@@ -549,7 +629,7 @@ export function Overview() {
           <div>
             <h1 style={{ color: '#0f172a', fontSize: 22, fontWeight: 700 }}>灌溉总览</h1>
             <p style={{ color: '#94a3b8', fontSize: 13, marginTop: 2 }}>
-              {dateStr} · {timeStr} · 当前基于模拟业务数据运行
+              {dateStr} · {timeStr} · {weatherEtError ? '天气/ET 使用本地回退数据' : liveWeather ? '天气/ET 接入 Open-Meteo 实时预报' : '天气/ET 数据加载中'}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -567,6 +647,8 @@ export function Overview() {
             <button
               onClick={() => {
                 setRefreshed(true);
+                setWeatherEtRefreshKey((key) => key + 1);
+                void Promise.all([refreshFields(), refreshDevices(), refreshPlans()]);
                 setTimeout(() => setRefreshed(false), 1200);
               }}
               className="flex items-center gap-2 px-4 py-2 rounded-xl"
@@ -648,7 +730,7 @@ export function Overview() {
             </div>
             <div className="mt-4 flex items-center gap-4" style={{ color: '#64748b', fontSize: 12 }}>
               <span>自动策略 {strategyState.autoEnabled}</span>
-              <span>运行分区 {dashboard.runningZones}</span>
+              <span>浇灌分区 {dashboard.runningZones}</span>
               <span>平均电量 {dashboard.averageBatteryLevel.toFixed(0)}%</span>
             </div>
           </InsightCard>
@@ -665,7 +747,7 @@ export function Overview() {
                 <div>
                   <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>近 7 日降雨量</div>
                   <ResponsiveContainer width="100%" height={90}>
-                    <BarChart data={rainfallHistory} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <BarChart data={chartRainfallHistory} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                       <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
@@ -691,7 +773,7 @@ export function Overview() {
                 <div>
                   <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>ET0 / ETc 趋势</div>
                   <ResponsiveContainer width="100%" height={90}>
-                    <LineChart data={etHistory} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <LineChart data={chartEtHistory} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} />
                       <YAxis domain={[2, 6]} tick={{ fontSize: 11, fill: '#94a3b8' }} />
@@ -750,7 +832,7 @@ export function Overview() {
               <div>
                 <h3 style={{ color: '#0f172a', fontSize: 15, fontWeight: 600 }}>地块态势地图</h3>
                 <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>
-                  地块状态主视图，分区运行和告警作为辅助图层
+                  地块状态主视图，分区浇灌和告警作为辅助图层
                 </p>
               </div>
               <button
@@ -781,6 +863,40 @@ export function Overview() {
                     </div>
                   </div>
                 )}
+                <div
+                  className="absolute left-4 top-4 z-10 rounded-xl px-3 py-2"
+                  style={{
+                    background: 'rgba(255,255,255,0.92)',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 10px 22px rgba(15,23,42,0.10)',
+                    backdropFilter: 'blur(8px)',
+                  }}
+                >
+                  <div style={{ color: '#0f172a', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>图例</div>
+                  <div className="flex flex-col gap-1.5">
+                    {Object.entries(STATUS_LABELS).map(([status, label]) => (
+                      <div key={status} className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
+                        <span
+                          className="inline-block rounded-full"
+                          style={{ width: 9, height: 9, background: STATUS_COLORS[status as Field['status']] }}
+                        />
+                        <span>地块填充：{label}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
+                      <span style={{ width: 18, height: 0, borderTop: `2px dashed ${ZONE_STATUS_COLORS.running}` }} />
+                      <span>分区浇灌中</span>
+                    </div>
+                    <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
+                      <span style={{ width: 18, height: 0, borderTop: `2px dashed ${ZONE_STATUS_COLORS.alarm}` }} />
+                      <span>分区告警</span>
+                    </div>
+                    <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
+                      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 16, height: 16, background: '#22c55e', color: '#fff', fontSize: 9, fontWeight: 700 }}>V</span>
+                      <span>在线设备点</span>
+                    </div>
+                  </div>
+                </div>
                 {amapEnabled && overviewMapReady && hoveredField && hoverPosition && (
                   <div
                     className="pointer-events-none absolute z-10 rounded-2xl p-4"

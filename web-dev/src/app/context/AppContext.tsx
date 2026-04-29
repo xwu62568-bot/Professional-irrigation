@@ -215,6 +215,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refreshPlans();
   }, [isAuthenticated, user?.id]);
 
+  useEffect(() => {
+    if (!supabase || !isAuthenticated) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshFields();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, user?.id]);
+
   const login = async (username: string, password: string) => {
     if (!supabase) {
       return {

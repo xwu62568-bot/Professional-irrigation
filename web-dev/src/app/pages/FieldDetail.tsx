@@ -1,15 +1,36 @@
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import {
   ArrowLeft, Droplets, Thermometer, Gauge, Activity, Leaf, CloudRain,
   Clock, CheckCircle, AlertTriangle, Cpu, Edit3, Map, TrendingUp
 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { useApp } from '../context/AppContext';
+import {
+  fetchEt0Forecast,
+  fetchWeatherOverview,
+  getForecastLocation,
+  type Et0ForecastDay,
+  type WeatherOverviewData,
+} from '../../lib/weatherEtService';
 
 const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', running: '#22c55e', alarm: '#ef4444' };
-const ZONE_STATUS_LABELS: Record<string, string> = { idle: '待机', running: '运行中', alarm: '告警' };
-const STATUS_COLORS: Record<string, string> = { normal: '#22c55e', warning: '#f59e0b', alarm: '#ef4444' };
-const STATUS_LABELS: Record<string, string> = { normal: '正常', warning: '预警', alarm: '告警' };
+const ZONE_STATUS_LABELS: Record<string, string> = { idle: '待机', running: '浇灌中', alarm: '告警' };
+const STATUS_COLORS: Record<string, string> = { normal: '#22c55e', warning: '#f59e0b', irrigating: '#2563eb', alarm: '#ef4444' };
+const STATUS_LABELS: Record<string, string> = { normal: '正常', warning: '预警', irrigating: '浇灌中', alarm: '告警' };
 
 const soilTrendData = [
   { t: '00:00', v: 72 }, { t: '04:00', v: 70 }, { t: '08:00', v: 67 },
@@ -38,8 +59,58 @@ export function FieldDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { fields, devices, plans, strategies } = useApp();
+  const [liveEt0, setLiveEt0] = useState<number | null>(null);
+  const [liveEt0Date, setLiveEt0Date] = useState('');
+  const [liveEt0Forecast, setLiveEt0Forecast] = useState<Et0ForecastDay[]>([]);
+  const [liveWeather, setLiveWeather] = useState<WeatherOverviewData | null>(null);
+  const [weatherEtError, setWeatherEtError] = useState('');
 
   const field = fields.find(f => f.id === id);
+
+  useEffect(() => {
+    if (!field) {
+      setLiveEt0(null);
+      setLiveEt0Date('');
+      setLiveEt0Forecast([]);
+      setLiveWeather(null);
+      setWeatherEtError('');
+      return;
+    }
+
+    const controller = new AbortController();
+    const { lat, lng } = getForecastLocation([field]);
+
+    setLiveEt0(null);
+    setLiveEt0Date('');
+    setLiveEt0Forecast([]);
+    setLiveWeather(null);
+    setWeatherEtError('');
+    void Promise.all([
+      fetchEt0Forecast(lat, lng, controller.signal),
+      fetchWeatherOverview(lat, lng, controller.signal),
+    ])
+      .then(([forecast, weather]) => {
+        const today = forecast[0];
+        if (today) {
+          setLiveEt0(today.et0);
+          setLiveEt0Date(today.date);
+        }
+        setLiveEt0Forecast(forecast);
+        setLiveWeather(weather);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setLiveEt0(null);
+          setLiveEt0Date('');
+          setLiveEt0Forecast([]);
+          setLiveWeather(null);
+          setWeatherEtError(error instanceof Error ? error.message : '天气和 ET 数据读取失败');
+        }
+      });
+
+    return () => controller.abort();
+  }, [field?.id, field?.geoCenter?.[0], field?.geoCenter?.[1]]);
+
   if (!field) {
     return (
       <div className="flex flex-col items-center justify-center h-full" style={{ color: '#94a3b8' }}>
@@ -52,6 +123,39 @@ export function FieldDetail() {
   const fieldDevices = devices.filter(d => d.fieldId === field.id || field.zones.some(z => z.id === d.zoneId));
   const fieldPlans = plans.filter(p => p.fieldId === field.id);
   const fieldStrategies = strategies.filter(s => s.fieldId === field.id);
+  const displayEt0 = liveEt0 ?? field.et0;
+  const displayEtc = Number((displayEt0 * field.kc).toFixed(2));
+  const displayRainfall = liveWeather?.todayRainMm ?? field.rainfall24h;
+  const replenishMm = Number(Math.max(0, displayEtc - displayRainfall * 0.8).toFixed(1));
+  const etTrendData = liveEt0Forecast.length
+    ? liveEt0Forecast.map((day) => ({
+      date: day.date.slice(5).replace('-', '/'),
+      et0: day.et0,
+      etc: Number((day.et0 * field.kc).toFixed(2)),
+    }))
+    : [
+      { date: '今日', et0: field.et0, etc: field.etc },
+      { date: '+1天', et0: field.et0, etc: field.etc },
+      { date: '+2天', et0: field.et0, etc: field.etc },
+      { date: '+3天', et0: field.et0, etc: field.etc },
+      { date: '+4天', et0: field.et0, etc: field.etc },
+      { date: '+5天', et0: field.et0, etc: field.etc },
+      { date: '+6天', et0: field.et0, etc: field.etc },
+    ];
+  const rainfallTrendData = liveWeather?.dailyRain.length
+    ? liveWeather.dailyRain.map((day) => ({
+      date: day.date.slice(5).replace('-', '/'),
+      rain: day.rainMm,
+    }))
+    : [
+      { date: '今日', rain: field.rainfall24h },
+      { date: '+1天', rain: 0 },
+      { date: '+2天', rain: 0 },
+      { date: '+3天', rain: 0 },
+      { date: '+4天', rain: 0 },
+      { date: '+5天', rain: 0 },
+      { date: '+6天', rain: 0 },
+    ];
   const soilProgress = Math.min(100, Math.max(0, field.soilMoisture));
   const moistureColor = field.soilMoisture < 40 ? '#ef4444' : field.soilMoisture < 55 ? '#f59e0b' : '#22c55e';
 
@@ -109,12 +213,12 @@ export function FieldDetail() {
           <div className="flex items-center gap-2">
             <CloudRain size={16} color="#60a5fa" />
             <span style={{ fontSize: 13, color: '#64748b' }}>今日降雨</span>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>{field.rainfall24h} mm</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>{displayRainfall} mm</span>
           </div>
           <div className="flex items-center gap-2">
             <Leaf size={16} color="#16a34a" />
             <span style={{ fontSize: 13, color: '#64748b' }}>ETc</span>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#16a34a' }}>{field.etc} mm/d</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#16a34a' }}>{displayEtc} mm/d</span>
           </div>
         </div>
       </div>
@@ -127,7 +231,7 @@ export function FieldDetail() {
           <InfoCard icon={Thermometer} label="土壤温度" value={field.soilTemperature} unit="°C" color="#f59e0b" sub="20cm深度" />
           <InfoCard icon={Activity} label="瞬时流量" value={field.flowRate} unit="m³/h" color="#0ea5e9" sub="主管道" />
           <InfoCard icon={Gauge} label="管道压力" value={field.pressure} unit="MPa" color="#8b5cf6" sub="工作压力" />
-          <InfoCard icon={Leaf} label="ETc" value={field.etc} unit="mm/d" color="#16a34a" sub={`Kc=${field.kc}`} />
+          <InfoCard icon={Leaf} label="ETc" value={displayEtc} unit="mm/d" color="#16a34a" sub={`ET0=${displayEt0} · Kc=${field.kc}`} />
         </div>
 
         {/* Row 2: Charts + ET info */}
@@ -168,10 +272,10 @@ export function FieldDetail() {
             <h3 style={{ color: '#0f172a', fontSize: 15, fontWeight: 600, marginBottom: 16 }}>ET 水量平衡</h3>
             <div className="flex flex-col gap-4">
               {[
-                { label: 'ET0（参考蒸散）', value: `${field.et0} mm/d`, color: '#0ea5e9', w: (field.et0 / 6) * 100 },
-                { label: `ETc（作物需水）Kc=${field.kc}`, value: `${field.etc} mm/d`, color: '#16a34a', w: (field.etc / 6) * 100 },
-                { label: '有效降雨', value: `${field.rainfall24h} mm`, color: '#60a5fa', w: Math.max(2, (field.rainfall24h / 10) * 100) },
-                { label: '灌溉补水量', value: `${(field.etc - field.rainfall24h * 0.8).toFixed(1)} mm`, color: '#f59e0b', w: ((field.etc - field.rainfall24h * 0.8) / 6) * 100 },
+                { label: 'ET0（参考蒸散）', value: `${displayEt0} mm/d`, color: '#0ea5e9', w: (displayEt0 / 6) * 100 },
+                { label: `ETc（作物需水）Kc=${field.kc}`, value: `${displayEtc} mm/d`, color: '#16a34a', w: (displayEtc / 6) * 100 },
+                { label: '有效降雨', value: `${displayRainfall} mm`, color: '#60a5fa', w: Math.max(2, (displayRainfall / 10) * 100) },
+                { label: '灌溉补水量', value: `${replenishMm} mm`, color: '#f59e0b', w: (replenishMm / 6) * 100 },
               ].map(({ label, value, color, w }) => (
                 <div key={label}>
                   <div className="flex items-center justify-between mb-1">
@@ -185,13 +289,58 @@ export function FieldDetail() {
               ))}
             </div>
             <div className="mt-4 pt-4 flex items-center justify-between" style={{ borderTop: '1px solid #f1f5f9' }}>
-              <span style={{ color: '#64748b', fontSize: 12 }}>Kc 更新时间</span>
-              <span style={{ color: '#94a3b8', fontSize: 12 }}>{field.kcUpdateTime}</span>
+              <span style={{ color: '#64748b', fontSize: 12 }}>ET0 数据日期</span>
+              <span style={{ color: '#94a3b8', fontSize: 12 }}>{liveEt0Date || field.kcUpdateTime}</span>
             </div>
           </div>
         </div>
 
-        {/* Row 3: Zones */}
+        {/* Row 3: Weather and ET trends */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="rounded-xl p-5" style={{ background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 style={{ color: '#0f172a', fontSize: 15, fontWeight: 600 }}>ET0 / ETc 趋势</h3>
+              <span style={{ color: '#94a3b8', fontSize: 12 }}>{weatherEtError ? '使用回退数据' : 'Open-Meteo'}</span>
+            </div>
+            <ResponsiveContainer width="100%" height={210}>
+              <LineChart data={etTrendData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip formatter={(value: number, name: string) => [`${Number(value).toFixed(2)} mm/d`, name === 'et0' ? 'ET0' : 'ETc']} />
+                <Line type="monotone" dataKey="et0" stroke="#0ea5e9" strokeWidth={2} dot={false} name="ET0" />
+                <Line type="monotone" dataKey="etc" stroke="#16a34a" strokeWidth={2} dot={false} name="ETc" />
+                <Legend iconType="line" iconSize={12} wrapperStyle={{ fontSize: 11 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="rounded-xl p-5" style={{ background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 style={{ color: '#0f172a', fontSize: 15, fontWeight: 600 }}>未来 7 日雨量</h3>
+              <span style={{ color: '#94a3b8', fontSize: 12 }}>
+                {liveWeather ? `24h ${liveWeather.next24hRainMm} mm · ${liveWeather.rainProbability}%` : weatherEtError ? '使用回退数据' : '加载中'}
+              </span>
+            </div>
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={rainfallTrendData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip formatter={(value: number) => [`${Number(value).toFixed(1)} mm`, '降雨量']} />
+                <Bar dataKey="rain" fill="#60a5fa" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            {liveWeather ? (
+              <div className="mt-2 flex items-center gap-2" style={{ color: '#64748b', fontSize: 12 }}>
+                <CloudRain size={14} color="#60a5fa" />
+                {liveWeather.recommendation}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Row 4: Zones */}
         <div className="rounded-xl p-5" style={{ background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
           <div className="flex items-center justify-between mb-4">
             <h3 style={{ color: '#0f172a', fontSize: 15, fontWeight: 600 }}>分区/站点状态</h3>
@@ -267,7 +416,7 @@ export function FieldDetail() {
           )}
         </div>
 
-        {/* Row 4: Related plans and strategies */}
+        {/* Row 5: Related plans and strategies */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="rounded-xl p-5" style={{ background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
             <div className="flex items-center justify-between mb-4">

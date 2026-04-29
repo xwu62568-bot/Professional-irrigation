@@ -48,6 +48,22 @@ type ZoneDeviceBindingRow = {
   station_name: string;
 };
 
+type FieldEtConfigRow = {
+  field_id: string;
+  kc_default: number | string | null;
+};
+
+type ActivePlanRunRow = {
+  id: string;
+  field_id: string | null;
+  status: string;
+  current_zone_id: string | null;
+};
+
+type ActiveFieldRun = {
+  currentZoneId: string | null;
+};
+
 function asNumber(value: number | string | null | undefined, fallback = 0) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -63,6 +79,11 @@ function asNumber(value: number | string | null | undefined, fallback = 0) {
   return fallback;
 }
 
+function asPositiveNumber(value: number | string | null | undefined, fallback = 0) {
+  const next = asNumber(value, fallback);
+  return next > 0 ? next : fallback;
+}
+
 function deriveFieldStatus(netNeed: number, etc: number): Field['status'] {
   if (netNeed >= 5 || etc >= 5) {
     return 'alarm';
@@ -74,11 +95,11 @@ function deriveFieldStatus(netNeed: number, etc: number): Field['status'] {
 }
 
 function deriveZoneStatus(fieldStatus: Field['status'], priority: number): Zone['status'] {
+  if (fieldStatus === 'irrigating') {
+    return 'idle';
+  }
   if (fieldStatus === 'alarm' && priority <= 1) {
     return 'alarm';
-  }
-  if (fieldStatus === 'warning' && priority <= 1) {
-    return 'running';
   }
   return 'idle';
 }
@@ -87,15 +108,23 @@ function estimateSoilMoisture(netNeed: number) {
   return Math.max(25, Math.min(78, Math.round(68 - netNeed * 6)));
 }
 
-function toField(row: FieldSummaryRow, zones: ZoneRow[], zoneBindingsByZoneId: Map<string, ZoneDeviceBindingRow[]>): Field {
+function toField(
+  row: FieldSummaryRow,
+  zones: ZoneRow[],
+  zoneBindingsByZoneId: Map<string, ZoneDeviceBindingRow[]>,
+  activeRun?: ActiveFieldRun,
+  etConfig?: FieldEtConfigRow,
+): Field {
+  const hasEtDaily = row.et_date !== null || row.et0 !== null || row.etc !== null || row.net_irrigation_need_mm !== null;
   const boundary = parseBoundary(row.boundary);
   const center = computeGeoCenter(boundary);
-  const et0 = asNumber(row.et0, 4.2);
-  const kc = asNumber(row.kc, 0.95);
-  const etc = asNumber(row.etc, Number((et0 * kc).toFixed(2)));
+  const et0 = asPositiveNumber(row.et0, 4.2);
+  const kc = asPositiveNumber(etConfig?.kc_default, asPositiveNumber(row.kc, 0.95));
+  const etc = hasEtDaily ? asNumber(row.etc, Number((et0 * kc).toFixed(2))) : 0;
   const rainfall24h = asNumber(row.rainfall_mm, 0);
-  const netNeed = asNumber(row.net_irrigation_need_mm, Math.max(0, etc - rainfall24h));
-  const status = deriveFieldStatus(netNeed, etc);
+  const netNeed = hasEtDaily ? asNumber(row.net_irrigation_need_mm, Math.max(0, etc - rainfall24h)) : 0;
+  const derivedStatus = deriveFieldStatus(netNeed, etc);
+  const status: Field['status'] = activeRun ? 'irrigating' : derivedStatus;
   const soilMoisture = estimateSoilMoisture(netNeed);
 
   return {
@@ -133,7 +162,7 @@ function toField(row: FieldSummaryRow, zones: ZoneRow[], zoneBindingsByZoneId: M
         fieldId: zone.field_id,
         name: zone.name,
         stationNo: stationNames.length > 0 ? stationNames.join(' / ') : `S${String(zone.site_number).padStart(2, '0')}`,
-        status: deriveZoneStatus(status, zone.priority),
+        status: activeRun?.currentZoneId === zone.id ? 'running' : deriveZoneStatus(derivedStatus, zone.priority),
         duration: 45,
         soilMoisture: Math.max(20, soilMoisture - zone.priority * 2),
         polygon: [],
@@ -185,6 +214,22 @@ export async function fetchFieldsFromSupabase() {
     zonesByFieldId.set(zone.field_id, list);
   });
 
+  const etConfigByFieldId = new Map<string, FieldEtConfigRow>();
+  if (fieldIds.length > 0) {
+    const { data, error } = await supabase
+      .from('field_et_configs')
+      .select('field_id, kc_default')
+      .in('field_id', fieldIds);
+
+    if (error) {
+      throw error;
+    }
+
+    ((data ?? []) as FieldEtConfigRow[]).forEach((config) => {
+      etConfigByFieldId.set(config.field_id, config);
+    });
+  }
+
   const zoneIds = zoneRows.map((zone) => zone.id);
   const zoneBindingsByZoneId = new Map<string, ZoneDeviceBindingRow[]>();
   if (zoneIds.length > 0) {
@@ -204,7 +249,33 @@ export async function fetchFieldsFromSupabase() {
     });
   }
 
-  const mapped = fields.map((row) => toField(row, zonesByFieldId.get(row.id) ?? [], zoneBindingsByZoneId));
+  const activeRunsByFieldId = new Map<string, ActiveFieldRun>();
+  if (fieldIds.length > 0) {
+    const { data, error } = await supabase
+      .from('plan_runs')
+      .select('id, field_id, status, current_zone_id')
+      .in('field_id', fieldIds)
+      .eq('status', 'running')
+      .order('started_at', { ascending: false });
+
+    if (!error) {
+      ((data ?? []) as ActivePlanRunRow[]).forEach((run) => {
+        if (run.field_id && !activeRunsByFieldId.has(run.field_id)) {
+          activeRunsByFieldId.set(run.field_id, { currentZoneId: run.current_zone_id });
+        }
+      });
+    } else {
+      console.error('Failed to load active plan runs:', error);
+    }
+  }
+
+  const mapped = fields.map((row) => toField(
+    row,
+    zonesByFieldId.get(row.id) ?? [],
+    zoneBindingsByZoneId,
+    activeRunsByFieldId.get(row.id),
+    etConfigByFieldId.get(row.id),
+  ));
 
   return applyVisualGeometryFromGeo(
     mapped,
@@ -248,6 +319,7 @@ export async function createFieldInSupabase(input: {
   code: string;
   cropType: string;
   growthStage: string;
+  kcDefault: number;
   irrigationEfficiency: number;
   boundary: GeoPoint[];
 }) {
@@ -275,6 +347,21 @@ export async function createFieldInSupabase(input: {
 
   if (error) {
     throw error;
+  }
+
+  const { error: etConfigError } = await supabase
+    .from('field_et_configs')
+    .upsert({
+      field_id: data.id,
+      kc_default: input.kcDefault,
+      crop_type: input.cropType,
+      growth_stage: input.growthStage,
+      latitude: center?.[1] ?? null,
+      longitude: center?.[0] ?? null,
+    }, { onConflict: 'field_id' });
+
+  if (etConfigError) {
+    throw etConfigError;
   }
 
   return data;
@@ -315,6 +402,7 @@ export async function updateFieldInSupabase(input: {
   code: string;
   cropType: string;
   growthStage: string;
+  kcDefault: number;
   irrigationEfficiency: number;
   boundary: GeoPoint[];
 }) {
@@ -340,6 +428,21 @@ export async function updateFieldInSupabase(input: {
 
   if (error) {
     throw error;
+  }
+
+  const { error: etConfigError } = await supabase
+    .from('field_et_configs')
+    .upsert({
+      field_id: input.fieldId,
+      kc_default: input.kcDefault,
+      crop_type: input.cropType,
+      growth_stage: input.growthStage,
+      latitude: center?.[1] ?? null,
+      longitude: center?.[0] ?? null,
+    }, { onConflict: 'field_id' });
+
+  if (etConfigError) {
+    throw etConfigError;
   }
 }
 

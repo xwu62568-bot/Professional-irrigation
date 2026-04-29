@@ -24,7 +24,7 @@ import { isSupabaseConfigured } from '../../lib/supabase';
 
 type MapMode = 'browse' | 'draw-field' | 'draw-zone';
 type DrawStep = 'drawing' | 'info';
-type FieldFormErrors = Partial<Record<'name' | 'code' | 'crop' | 'stage' | 'efficiency', string>>;
+type FieldFormErrors = Partial<Record<'name' | 'code' | 'crop' | 'stage' | 'kc' | 'efficiency', string>>;
 type ZoneFormErrors = Partial<Record<'name' | 'bindings', string>>;
 type ZoneDeviceDraft = {
   key: string;
@@ -38,7 +38,15 @@ type ZoneDeviceDraft = {
 const STATUS_COLORS: Record<Field['status'], string> = {
   normal: '#22c55e',
   warning: '#f59e0b',
+  irrigating: '#2563eb',
   alarm: '#ef4444',
+};
+
+const STATUS_LABELS: Record<Field['status'], string> = {
+  normal: '正常',
+  warning: '预警',
+  irrigating: '浇灌中',
+  alarm: '告警',
 };
 
 const ZONE_STATUS_COLORS = {
@@ -305,6 +313,7 @@ export function FieldMap() {
   const overlaysRef = useRef<any[]>([]);
   const tempOverlaysRef = useRef<any[]>([]);
   const drawClickTimerRef = useRef<number | null>(null);
+  const hasAutoFitMapRef = useRef(false);
 
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState('');
@@ -323,6 +332,7 @@ export function FieldMap() {
   const [newFieldCode, setNewFieldCode] = useState('');
   const [newFieldCrop, setNewFieldCrop] = useState('玉米');
   const [newFieldStage, setNewFieldStage] = useState('苗期');
+  const [newFieldKc, setNewFieldKc] = useState('0.95');
   const [newFieldEff, setNewFieldEff] = useState('0.85');
   const [fieldFormErrors, setFieldFormErrors] = useState<FieldFormErrors>({});
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
@@ -435,7 +445,7 @@ export function FieldMap() {
 
         setMapDebugPhase('creating-map');
         const cachedCenter = getCachedCenter();
-        const initialCenter = initialFieldCenter ?? cachedCenter ?? DEFAULT_CENTER;
+        const initialCenter = cachedCenter ?? initialFieldCenter ?? DEFAULT_CENTER;
         const map = new AMap.Map(mapContainerRef.current, {
           resizeEnable: true,
           zoom: 16,
@@ -457,14 +467,15 @@ export function FieldMap() {
         setMapReady(true);
         setMapDebugPhase('map-ready');
 
+        if (cachedCenter) {
+          setLocationSource('cached');
+          return;
+        }
+
         if (initialFieldCenter) {
           setLocationSource('field-data');
           setCachedCenter(initialFieldCenter);
           return;
-        }
-
-        if (cachedCenter) {
-          setLocationSource('cached');
         }
 
         getBrowserLocation()
@@ -542,7 +553,7 @@ export function FieldMap() {
           strokeColor: STATUS_COLORS[field.status],
           strokeWeight: fieldSelected ? 4 : 2,
           fillColor: STATUS_COLORS[field.status],
-          fillOpacity: fieldSelected ? 0.28 : 0.14,
+          fillOpacity: fieldSelected ? 0.42 : field.status === 'normal' ? 0.24 : 0.34,
           zIndex: fieldSelected ? 30 : 20,
         });
 
@@ -581,6 +592,29 @@ export function FieldMap() {
         });
         zonePolygon.setMap(map);
         allOverlays.push(zonePolygon);
+
+        const zoneLabelPosition = zone.geoCenter ?? zone.geoBoundary[0];
+        const zoneLabel = new AMap.Text({
+          text: zone.name,
+          position: zoneLabelPosition,
+          offset: new AMap.Pixel(-24, -12),
+          style: {
+            padding: '2px 7px',
+            borderRadius: '999px',
+            border: `1px solid ${ZONE_STATUS_COLORS[zone.status]}40`,
+            background: zoneSelected ? 'rgba(255,255,255,0.96)' : 'rgba(255,255,255,0.86)',
+            color: '#0f172a',
+            fontSize: '11px',
+            fontWeight: zoneSelected || zone.status !== 'idle' ? '700' : '600',
+            boxShadow: '0 6px 14px rgba(15,23,42,0.12)',
+          },
+        });
+        zoneLabel.on('click', () => {
+          setSelectedFieldId(field.id);
+          setSelectedZoneId(zone.id);
+        });
+        zoneLabel.setMap(map);
+        allOverlays.push(zoneLabel);
       });
 
       if (shouldRenderField) {
@@ -626,8 +660,9 @@ export function FieldMap() {
 
     overlaysRef.current = allOverlays;
 
-    if (allOverlays.length > 0) {
+    if (allOverlays.length > 0 && !hasAutoFitMapRef.current) {
       map.setFitView(allOverlays, false, [60, 60, 60, 60]);
+      hasAutoFitMapRef.current = true;
     }
   }, [devices, editingFieldId, editingZoneId, fields, isEditingField, isEditingZone, mapReady, selectedFieldId, selectedZoneId]);
 
@@ -869,6 +904,7 @@ export function FieldMap() {
     setNewFieldCode('');
     setNewFieldCrop('玉米');
     setNewFieldStage('苗期');
+    setNewFieldKc('0.95');
     setNewFieldEff('0.85');
     setFieldFormErrors({});
     setEditingFieldId(null);
@@ -939,6 +975,7 @@ export function FieldMap() {
     setNewFieldCode(field.code);
     setNewFieldCrop(field.crop);
     setNewFieldStage(field.growthStage);
+    setNewFieldKc(String(field.kc || 0.95));
     setNewFieldEff(String(field.irrigationEfficiency));
     setFieldFormErrors({});
     setDrawPoints(boundary);
@@ -1005,6 +1042,14 @@ export function FieldMap() {
     if (!newFieldStage.trim()) {
       nextErrors.stage = '请输入生育期';
     }
+    if (!newFieldKc.trim()) {
+      nextErrors.kc = '请输入植物系数 Kc';
+    } else {
+      const kc = Number(newFieldKc);
+      if (!Number.isFinite(kc) || kc <= 0 || kc > 2) {
+        nextErrors.kc = 'Kc 需为 0 到 2 之间';
+      }
+    }
     if (!newFieldEff.trim()) {
       nextErrors.efficiency = '请输入灌溉效率';
     } else {
@@ -1037,6 +1082,7 @@ export function FieldMap() {
             code: newFieldCode.trim(),
             cropType: newFieldCrop.trim(),
             growthStage: newFieldStage.trim(),
+            kcDefault: Number(newFieldKc) || 0.95,
             irrigationEfficiency: Number(newFieldEff) || 0.85,
             boundary: drawPoints,
           });
@@ -1055,6 +1101,7 @@ export function FieldMap() {
             code: newFieldCode.trim() || `FA-${String(fields.length + 1).padStart(3, '0')}`,
             cropType: newFieldCrop.trim() || '玉米',
             growthStage: newFieldStage.trim() || '苗期',
+            kcDefault: Number(newFieldKc) || 0.95,
             irrigationEfficiency: Number(newFieldEff) || 0.85,
             boundary: drawPoints,
           });
@@ -1071,6 +1118,8 @@ export function FieldMap() {
                   code: newFieldCode.trim(),
                   crop: newFieldCrop.trim(),
                   growthStage: newFieldStage.trim(),
+                  kc: Number(newFieldKc) || field.kc,
+                  etc: Number(((Number(newFieldKc) || field.kc) * field.et0).toFixed(2)),
                   irrigationEfficiency: Number(newFieldEff) || 0.85,
                   geoBoundary: drawPoints,
                   geoCenter: drawPoints[0],
@@ -1347,7 +1396,7 @@ export function FieldMap() {
                     fontWeight: 600,
                   }}
                 >
-                  {field.status === 'normal' ? '正常' : field.status === 'warning' ? '预警' : '告警'}
+                  {STATUS_LABELS[field.status]}
                 </span>
               </div>
 
@@ -1527,6 +1576,7 @@ export function FieldMap() {
                     { key: 'code' as const, label: '编号 *', value: newFieldCode, onChange: setNewFieldCode, placeholder: '如：FA-001' },
                     { key: 'crop' as const, label: '作物品种 *', value: newFieldCrop, onChange: setNewFieldCrop, placeholder: '如：玉米' },
                     { key: 'stage' as const, label: '生育期 *', value: newFieldStage, onChange: setNewFieldStage, placeholder: '如：拔节期' },
+                    { key: 'kc' as const, label: '植物系数 Kc *', value: newFieldKc, onChange: setNewFieldKc, placeholder: '如：0.95' },
                     { key: 'efficiency' as const, label: '灌溉效率 *', value: newFieldEff, onChange: setNewFieldEff, placeholder: '0.85' },
                   ].map((item) => (
                     <div key={item.label}>
@@ -1735,7 +1785,7 @@ export function FieldMap() {
                 className="px-2 py-0.5 rounded-full text-xs"
                 style={{ background: `${STATUS_COLORS[selectedField.status]}20`, color: STATUS_COLORS[selectedField.status] }}
               >
-                {selectedField.status === 'normal' ? '正常' : selectedField.status === 'warning' ? '预警' : '告警'}
+                {STATUS_LABELS[selectedField.status]}
               </span>
               <span style={{ color: '#94a3b8', fontSize: 12 }}>{selectedField.code}</span>
             </div>
@@ -1785,7 +1835,7 @@ export function FieldMap() {
                           className="px-1.5 py-0.5 rounded-full text-xs"
                           style={{ background: `${ZONE_STATUS_COLORS[zone.status]}20`, color: ZONE_STATUS_COLORS[zone.status] }}
                         >
-                          {zone.status === 'idle' ? '待机' : zone.status === 'running' ? '关注' : '高风险'}
+                          {zone.status === 'idle' ? '待机' : zone.status === 'running' ? '浇灌中' : '高风险'}
                         </span>
                       </div>
                       <div style={{ color: '#94a3b8', fontSize: 11 }}>
