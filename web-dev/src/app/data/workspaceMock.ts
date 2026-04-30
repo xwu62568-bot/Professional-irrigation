@@ -112,7 +112,7 @@ export function buildDashboardSnapshot(
       (sum, field) => sum + field.zones.filter((zone) => zone.status === 'running').length,
       0,
     ),
-    attentionFields: fields.filter((field) => field.status !== 'normal' && field.status !== 'irrigating').length,
+    attentionFields: fields.filter((field) => field.status !== 'normal').length,
     averageBatteryLevel: avg(batteryValues),
     averageEt0: avg(fields.map((field) => field.et0)),
     averageEtc: avg(fields.map((field) => field.etc)),
@@ -243,14 +243,17 @@ export function buildSensorOverview(fields: Field[], devices: Device[]): SensorO
 }
 
 export function buildSupplyOverview(devices: Device[], duePlans: DuePlan[]): SupplyOverview {
-  const valveCount = devices.filter((device) => device.type === 'valve').length || 1;
+  const stationCount = devices.reduce(
+    (sum, device) => sum + (device.type === 'controller' ? device.stations?.length ?? device.channelCount ?? 0 : 0),
+    0,
+  );
 
   return {
     scheduledFlowM3h: Number((duePlans.reduce((sum, plan) => sum + plan.zoneCount * 2.8, 0)).toFixed(1)),
     systemRiskCount: devices.filter((device) => device.status !== 'online').length,
     lowBatteryCount: devices.filter((device) => (device.batteryLevel ?? 100) < 30).length,
     offlineDeviceCount: devices.filter((device) => device.status === 'offline').length,
-    alarmDeviceCount: devices.filter((device) => device.status === 'alarm').length + Math.max(0, valveCount - 6),
+    alarmDeviceCount: devices.filter((device) => device.status === 'alarm').length + Math.max(0, stationCount - 8),
   };
 }
 
@@ -272,8 +275,8 @@ export function buildActionItems(
 ): ActionItem[] {
   const items: ActionItem[] = [];
   const urgentField = fieldRisks.find((risk) => risk.riskLevel === '高');
-  const offlineValve = devices.find(
-    (device) => device.type === 'valve' && device.status === 'offline',
+  const offlineController = devices.find(
+    (device) => device.type === 'controller' && device.status === 'offline',
   );
   const alarmField = fields.find((field) => field.status === 'alarm');
 
@@ -286,11 +289,11 @@ export function buildActionItems(
     });
   }
 
-  if (offlineValve) {
+  if (offlineController) {
     items.push({
-      id: `device-${offlineValve.id}`,
-      title: `现场阀门离线`,
-      description: `${offlineValve.name} 已离线，执行计划前需确认链路`,
+      id: `device-${offlineController.id}`,
+      title: `控制器离线`,
+      description: `${offlineController.name} 已离线，执行计划前需确认链路`,
       severity: 'warning',
     });
   }

@@ -300,6 +300,16 @@ export function createRunService(config, logger = console) {
     const deviceById = new Map(devices.map((device) => [device.id, device]));
     const bindingsByZoneId = new Map();
     bindings.forEach((binding) => {
+      const device = deviceById.get(binding.device_id);
+      if (!device || device.type !== 'controller') {
+        logger.log('[execution-service] skip non-controller binding', {
+          zoneId: binding.zone_id,
+          deviceId: binding.device_id,
+          deviceType: device?.type ?? 'missing',
+          stationId: binding.station_id,
+        });
+        return;
+      }
       const list = bindingsByZoneId.get(binding.zone_id) ?? [];
       list.push(binding);
       bindingsByZoneId.set(binding.zone_id, list);

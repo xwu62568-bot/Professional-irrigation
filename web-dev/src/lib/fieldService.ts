@@ -56,12 +56,20 @@ type FieldEtConfigRow = {
 type ActivePlanRunRow = {
   id: string;
   field_id: string | null;
+  plan_id: string;
   status: string;
   current_zone_id: string | null;
 };
 
+type ActivePlanRunStepRow = {
+  run_id: string;
+  zone_id: string | null;
+  status: string;
+};
+
 type ActiveFieldRun = {
   currentZoneId: string | null;
+  pendingZoneIds: Set<string>;
 };
 
 function asNumber(value: number | string | null | undefined, fallback = 0) {
@@ -95,9 +103,6 @@ function deriveFieldStatus(netNeed: number, etc: number): Field['status'] {
 }
 
 function deriveZoneStatus(fieldStatus: Field['status'], priority: number): Zone['status'] {
-  if (fieldStatus === 'irrigating') {
-    return 'idle';
-  }
   if (fieldStatus === 'alarm' && priority <= 1) {
     return 'alarm';
   }
@@ -106,6 +111,31 @@ function deriveZoneStatus(fieldStatus: Field['status'], priority: number): Zone[
 
 function estimateSoilMoisture(netNeed: number) {
   return Math.max(25, Math.min(78, Math.round(68 - netNeed * 6)));
+}
+
+function getStationDisplayValue(value: string) {
+  const trimmed = value.trim();
+  const chMatch = trimmed.match(/CH\s*(\d+)/i);
+  if (chMatch) {
+    return `S${chMatch[1]}`;
+  }
+
+  const routeMatch = trimmed.match(/(\d+)\s*路/);
+  if (routeMatch) {
+    return `S${routeMatch[1]}`;
+  }
+
+  const namedStationMatch = trimmed.match(/站点\s*(\d+)/);
+  if (namedStationMatch) {
+    return `S${namedStationMatch[1]}`;
+  }
+
+  const stationMatch = trimmed.match(/S0*(\d+)/i);
+  if (stationMatch) {
+    return `S${stationMatch[1]}`;
+  }
+
+  return trimmed;
 }
 
 function toField(
@@ -123,8 +153,7 @@ function toField(
   const etc = hasEtDaily ? asNumber(row.etc, Number((et0 * kc).toFixed(2))) : 0;
   const rainfall24h = asNumber(row.rainfall_mm, 0);
   const netNeed = hasEtDaily ? asNumber(row.net_irrigation_need_mm, Math.max(0, etc - rainfall24h)) : 0;
-  const derivedStatus = deriveFieldStatus(netNeed, etc);
-  const status: Field['status'] = activeRun ? 'irrigating' : derivedStatus;
+  const status = deriveFieldStatus(netNeed, etc);
   const soilMoisture = estimateSoilMoisture(netNeed);
 
   return {
@@ -155,14 +184,19 @@ function toField(
       const zoneBoundary = parseBoundary(zone.boundary);
       const zoneCenter = computeGeoCenter(zoneBoundary);
       const bindings = zoneBindingsByZoneId.get(zone.id) ?? [];
-      const stationNames = [...new Set(bindings.map((binding) => binding.station_name))];
+      const stationNames = [...new Set(bindings.map((binding) => getStationDisplayValue(binding.station_name)))];
       const deviceIds = [...new Set(bindings.map((binding) => binding.device_id))];
       return {
         id: zone.id,
         fieldId: zone.field_id,
         name: zone.name,
+        siteNumber: zone.site_number,
         stationNo: stationNames.length > 0 ? stationNames.join(' / ') : `S${String(zone.site_number).padStart(2, '0')}`,
-        status: activeRun?.currentZoneId === zone.id ? 'running' : deriveZoneStatus(derivedStatus, zone.priority),
+        status: activeRun?.currentZoneId === zone.id
+          ? 'running'
+          : activeRun?.pendingZoneIds.has(zone.id)
+            ? 'pending'
+            : deriveZoneStatus(status, zone.priority),
         duration: 45,
         soilMoisture: Math.max(20, soilMoisture - zone.priority * 2),
         polygon: [],
@@ -253,15 +287,43 @@ export async function fetchFieldsFromSupabase() {
   if (fieldIds.length > 0) {
     const { data, error } = await supabase
       .from('plan_runs')
-      .select('id, field_id, status, current_zone_id')
+      .select('id, field_id, plan_id, status, current_zone_id')
       .in('field_id', fieldIds)
       .eq('status', 'running')
       .order('started_at', { ascending: false });
 
     if (!error) {
-      ((data ?? []) as ActivePlanRunRow[]).forEach((run) => {
+      const runs = (data ?? []) as ActivePlanRunRow[];
+      const runIds = runs.map((run) => run.id);
+      const pendingZoneIdsByRunId = new Map<string, Set<string>>();
+
+      if (runIds.length > 0) {
+        const { data: stepRows, error: stepError } = await supabase
+          .from('plan_run_steps')
+          .select('run_id, zone_id, status')
+          .in('run_id', runIds)
+          .eq('status', 'pending');
+
+        if (!stepError) {
+          ((stepRows ?? []) as ActivePlanRunStepRow[]).forEach((step) => {
+            if (!step.zone_id) {
+              return;
+            }
+            const pendingZoneIds = pendingZoneIdsByRunId.get(step.run_id) ?? new Set<string>();
+            pendingZoneIds.add(step.zone_id);
+            pendingZoneIdsByRunId.set(step.run_id, pendingZoneIds);
+          });
+        } else {
+          console.error('Failed to load pending plan run steps:', stepError);
+        }
+      }
+
+      runs.forEach((run) => {
         if (run.field_id && !activeRunsByFieldId.has(run.field_id)) {
-          activeRunsByFieldId.set(run.field_id, { currentZoneId: run.current_zone_id });
+          activeRunsByFieldId.set(run.field_id, {
+            currentZoneId: run.current_zone_id,
+            pendingZoneIds: pendingZoneIdsByRunId.get(run.id) ?? new Set<string>(),
+          });
         }
       });
     } else {

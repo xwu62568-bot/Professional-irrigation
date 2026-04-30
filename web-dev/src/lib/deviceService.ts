@@ -9,6 +9,7 @@ type DeviceRow = {
   name: string;
   model: string;
   type: Device['type'];
+  sensor_type: Device['sensorType'] | null;
   status: Device['status'];
   station_code: string | null;
   stations: unknown;
@@ -27,6 +28,7 @@ type ZoneDeviceBindingRow = {
   device_id: string;
   station_id: string;
   station_name: string;
+  switch_status: 'open' | 'closed' | 'unknown' | 'none' | null;
   lng: number | string | null;
   lat: number | string | null;
 };
@@ -88,20 +90,48 @@ function getDeviceSeedStations(device: Device) {
   return [];
 }
 
+function inferSensorType(row: Pick<DeviceRow, 'client_key' | 'name' | 'model' | 'sensor_type' | 'type'>): Device['sensorType'] | undefined {
+  if (row.type !== 'sensor') {
+    return undefined;
+  }
+
+  if (row.sensor_type) {
+    return row.sensor_type;
+  }
+
+  const mockMatch = mockDevices.find((device) => device.id === row.client_key);
+  if (mockMatch?.sensorType) {
+    return mockMatch.sensorType;
+  }
+
+  const haystack = `${row.client_key} ${row.name} ${row.model}`.toLowerCase();
+  if (haystack.includes('rain') || haystack.includes('rainfall') || haystack.includes('雨量') || haystack.includes('rs-')) {
+    return 'rainfall';
+  }
+  if (haystack.includes('soil') || haystack.includes('moisture') || haystack.includes('土壤') || haystack.includes('湿度') || haystack.includes('ss-')) {
+    return 'soil_moisture';
+  }
+  if (haystack.includes('temp') || haystack.includes('temperature') || haystack.includes('温度')) {
+    return 'temperature';
+  }
+
+  return undefined;
+}
+
+function asUuidOrNull(value: string | null | undefined) {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null;
+}
+
+const LEGACY_MOCK_DEVICE_KEYS = [
+  'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9', 'd10', 'd11', 'd12', 'd13', 'd14', 'd15',
+];
+
 export async function seedDevicesInSupabase(userId: string) {
   if (!supabase) {
     throw new Error('Supabase 未配置');
   }
-
-  const { data: existingRows, error: countError } = await supabase
-    .from('irrigation_devices')
-    .select('id, client_key')
-    .eq('user_id', userId);
-
-  if (countError) {
-    throw countError;
-  }
-  const existingClientKeys = new Set((existingRows ?? []).map((row) => row.client_key));
 
   const sourceDevices = [...mockDevices];
   const wifiDemoDevice = getWifiDemoAppDevice();
@@ -109,34 +139,71 @@ export async function seedDevicesInSupabase(userId: string) {
     sourceDevices.push(wifiDemoDevice);
   }
 
-  const rows = sourceDevices
-    .filter((device) => !existingClientKeys.has(device.id))
-    .map((device) => ({
-    id: device.id === wifiDemoDevice?.id ? device.id : `${userId}:${device.id}`,
-    user_id: userId,
-    client_key: device.id,
-    name: device.name,
-    model: device.model,
-    type: device.type,
-    status: device.status,
-    station_code: device.stationNo ?? null,
-    stations: getDeviceSeedStations(device),
-    field_id: null,
-    zone_id: null,
-    center_lng: null,
-    center_lat: null,
-    signal_strength: device.signalStrength ?? null,
-    battery_level: device.batteryLevel ?? null,
-    last_seen_label: device.lastSeen,
-  }));
+  const { data: existingRows, error: existingRowsError } = await supabase
+    .from('irrigation_devices')
+    .select('client_key, field_id, zone_id, center_lng, center_lat, station_code')
+    .eq('user_id', userId);
 
-  if (rows.length === 0) {
-    return;
+  if (existingRowsError) {
+    throw existingRowsError;
   }
 
-  const { error } = await supabase.from('irrigation_devices').insert(rows);
-  if (error) {
-    throw error;
+  const existingRowByClientKey = new Map<string, Pick<DeviceRow, 'client_key' | 'field_id' | 'zone_id' | 'center_lng' | 'center_lat' | 'station_code'>>();
+  (existingRows ?? []).forEach((row) => {
+    existingRowByClientKey.set(String(row.client_key), row as Pick<DeviceRow, 'client_key' | 'field_id' | 'zone_id' | 'center_lng' | 'center_lat' | 'station_code'>);
+  });
+
+  const sourceClientKeys = new Set(sourceDevices.map((device) => device.id));
+  const staleMockKeys = LEGACY_MOCK_DEVICE_KEYS.filter((key) => !sourceClientKeys.has(key));
+  if (staleMockKeys.length > 0) {
+    const { error: staleDeleteError } = await supabase
+      .from('irrigation_devices')
+      .delete()
+      .eq('user_id', userId)
+      .in('client_key', staleMockKeys);
+
+    if (staleDeleteError) {
+      throw staleDeleteError;
+    }
+  }
+
+  const rows = sourceDevices.map((device) => {
+    const existingRow = existingRowByClientKey.get(device.id);
+    const seededFieldId = asUuidOrNull(device.fieldId) ?? existingRow?.field_id ?? null;
+    const seededZoneId = asUuidOrNull(device.zoneId) ?? existingRow?.zone_id ?? null;
+    const seededCenterLng = device.geoPosition?.[0] ?? asNumber(existingRow?.center_lng) ?? null;
+    const seededCenterLat = device.geoPosition?.[1] ?? asNumber(existingRow?.center_lat) ?? null;
+    const seededStationCode = device.stationNo ?? existingRow?.station_code ?? null;
+
+    return {
+      id: device.id === wifiDemoDevice?.id ? device.id : `${userId}:${device.id}`,
+      user_id: userId,
+      client_key: device.id,
+      name: device.name,
+      model: device.model,
+      type: device.type,
+      sensor_type: device.sensorType ?? null,
+      status: device.status,
+      station_code: seededStationCode,
+      stations: getDeviceSeedStations(device),
+      field_id: seededFieldId,
+      zone_id: seededZoneId,
+      center_lng: seededCenterLng,
+      center_lat: seededCenterLat,
+      signal_strength: device.signalStrength ?? null,
+      battery_level: device.batteryLevel ?? null,
+      last_seen_label: device.lastSeen,
+    };
+  });
+
+  if (rows.length > 0) {
+    const { error } = await supabase
+      .from('irrigation_devices')
+      .upsert(rows, { onConflict: 'user_id,client_key' });
+
+    if (error) {
+      throw error;
+    }
   }
 }
 
@@ -147,7 +214,7 @@ export async function fetchDevicesFromSupabase() {
 
   const { data: deviceRows, error: deviceError } = await supabase
     .from('irrigation_devices')
-    .select('id, user_id, client_key, name, model, type, status, station_code, stations, field_id, zone_id, center_lng, center_lat, signal_strength, battery_level, last_seen_label')
+    .select('id, user_id, client_key, name, model, type, sensor_type, status, station_code, stations, field_id, zone_id, center_lng, center_lat, signal_strength, battery_level, last_seen_label')
     .order('name', { ascending: true });
 
   if (deviceError) {
@@ -161,7 +228,7 @@ export async function fetchDevicesFromSupabase() {
   if (deviceIds.length > 0) {
     const { data, error } = await supabase
       .from('zone_device_bindings')
-      .select('field_id, zone_id, device_id, station_id, station_name, lng, lat')
+      .select('field_id, zone_id, device_id, station_id, station_name, switch_status, lng, lat')
       .in('device_id', deviceIds)
       .order('station_name', { ascending: true });
 
@@ -188,26 +255,30 @@ export async function fetchDevicesFromSupabase() {
         zoneId: binding.zone_id,
         stationId: binding.station_id,
         stationName: binding.station_name,
+        switchStatus: binding.switch_status ?? 'unknown',
         geoPosition: lng !== null && lat !== null ? [lng, lat] as [number, number] : undefined,
       };
     });
     const primaryBinding = bindings[0];
     const centerLng = asNumber(row.center_lng);
     const centerLat = asNumber(row.center_lat);
+    const deviceCenter = centerLng !== null && centerLat !== null ? [centerLng, centerLat] as [number, number] : undefined;
+    const geoPosition = row.type === 'controller'
+      ? (deviceCenter ?? primaryBinding?.geoPosition)
+      : (primaryBinding?.geoPosition ?? deviceCenter);
 
     return {
       id: row.id,
       name: row.name,
       model: row.model,
       type: row.type,
+      sensorType: inferSensorType(row),
       status: row.status,
       position: [0, 0],
-      geoPosition: primaryBinding?.geoPosition ?? (
-        centerLng !== null && centerLat !== null ? [centerLng, centerLat] : undefined
-      ),
-      zoneId: primaryBinding?.zoneId ?? row.zone_id ?? '',
-      fieldId: primaryBinding?.fieldId ?? row.field_id ?? '',
-      stationNo: primaryBinding?.stationName ?? row.station_code ?? undefined,
+      geoPosition,
+      zoneId: row.type === 'controller' ? (row.zone_id ?? primaryBinding?.zoneId ?? '') : (primaryBinding?.zoneId ?? row.zone_id ?? ''),
+      fieldId: row.type === 'controller' ? (row.field_id ?? primaryBinding?.fieldId ?? '') : (primaryBinding?.fieldId ?? row.field_id ?? ''),
+      stationNo: row.type === 'controller' ? (row.station_code ?? primaryBinding?.stationName ?? undefined) : (primaryBinding?.stationName ?? row.station_code ?? undefined),
       lastSeen: row.last_seen_label ?? '—',
       signalStrength: row.signal_strength ?? undefined,
       batteryLevel: row.battery_level ?? undefined,
@@ -225,12 +296,59 @@ export async function saveZoneDeviceBindingsInSupabase(input: {
     deviceId: string;
     stationId: string;
     stationName: string;
+    switchStatus?: 'open' | 'closed' | 'unknown' | 'none';
+    position: [number, number];
+  }>;
+  controllerPositions?: Array<{
+    deviceId: string;
     position: [number, number];
   }>;
 }) {
   if (!supabase) {
     throw new Error('Supabase 未配置');
   }
+
+  const requestedDeviceIds = [
+    ...new Set([
+      ...input.bindings.map((binding) => binding.deviceId),
+      ...(input.controllerPositions ?? []).map((item) => item.deviceId),
+    ]),
+  ];
+
+  const resolvedDeviceIds = new Map<string, string>();
+  if (requestedDeviceIds.length > 0) {
+    const { data: deviceRows, error: deviceLookupError } = await supabase
+      .from('irrigation_devices')
+      .select('id, client_key')
+      .eq('user_id', input.userId);
+
+    if (deviceLookupError) {
+      throw deviceLookupError;
+    }
+
+    (deviceRows ?? [])
+      .filter((row: Pick<DeviceRow, 'id' | 'client_key'>) => requestedDeviceIds.includes(row.id) || requestedDeviceIds.includes(row.client_key))
+      .forEach((row: Pick<DeviceRow, 'id' | 'client_key'>) => {
+        resolvedDeviceIds.set(row.id, row.id);
+        resolvedDeviceIds.set(row.client_key, row.id);
+      });
+  }
+
+  const bindings = input.bindings.map((binding) => {
+    const resolvedDeviceId = resolvedDeviceIds.get(binding.deviceId);
+    if (!resolvedDeviceId) {
+      throw new Error(`设备未同步到数据库：${binding.deviceId}`);
+    }
+    return { ...binding, deviceId: resolvedDeviceId };
+  });
+
+  const controllerPositions = (input.controllerPositions ?? []).map((item) => {
+    const resolvedDeviceId = resolvedDeviceIds.get(item.deviceId);
+    if (!resolvedDeviceId) {
+      throw new Error(`设备未同步到数据库：${item.deviceId}`);
+    }
+    return { ...item, deviceId: resolvedDeviceId };
+  });
 
   const { error: deleteError } = await supabase
     .from('zone_device_bindings')
@@ -241,17 +359,18 @@ export async function saveZoneDeviceBindingsInSupabase(input: {
     throw deleteError;
   }
 
-  if (input.bindings.length > 0) {
+  if (bindings.length > 0) {
     const { error: insertError } = await supabase
       .from('zone_device_bindings')
       .insert(
-        input.bindings.map((binding) => ({
+        bindings.map((binding) => ({
           user_id: input.userId,
           field_id: input.fieldId,
           zone_id: input.zoneId,
           device_id: binding.deviceId,
           station_id: binding.stationId,
           station_name: binding.stationName,
+          switch_status: binding.switchStatus ?? 'unknown',
           lng: binding.position[0],
           lat: binding.position[1],
         })),
@@ -263,7 +382,7 @@ export async function saveZoneDeviceBindingsInSupabase(input: {
   }
 
   const updates = new Map<string, { zoneId: string; stationName: string; lng: number; lat: number }>();
-  input.bindings.forEach((binding) => {
+  bindings.forEach((binding) => {
     if (!updates.has(binding.deviceId)) {
       updates.set(binding.deviceId, {
         zoneId: input.zoneId,
@@ -292,6 +411,26 @@ export async function saveZoneDeviceBindingsInSupabase(input: {
       }
     }),
   );
+
+  if (controllerPositions.length > 0) {
+    await Promise.all(
+      controllerPositions.map(async ({ deviceId, position }) => {
+        const { error } = await supabase
+          .from('irrigation_devices')
+          .update({
+            field_id: input.fieldId,
+            zone_id: input.zoneId,
+            center_lng: position[0],
+            center_lat: position[1],
+          })
+          .eq('id', deviceId);
+
+        if (error) {
+          throw error;
+        }
+      }),
+    );
+  }
 }
 
 export async function clearDeviceAssignmentsForFieldInSupabase(fieldId: string) {

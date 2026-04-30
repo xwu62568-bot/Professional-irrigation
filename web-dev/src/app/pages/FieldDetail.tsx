@@ -27,10 +27,10 @@ import {
   type WeatherOverviewData,
 } from '../../lib/weatherEtService';
 
-const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', running: '#22c55e', alarm: '#ef4444' };
-const ZONE_STATUS_LABELS: Record<string, string> = { idle: '待机', running: '浇灌中', alarm: '告警' };
-const STATUS_COLORS: Record<string, string> = { normal: '#22c55e', warning: '#f59e0b', irrigating: '#2563eb', alarm: '#ef4444' };
-const STATUS_LABELS: Record<string, string> = { normal: '正常', warning: '预警', irrigating: '浇灌中', alarm: '告警' };
+const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', pending: '#f59e0b', running: '#2563eb', alarm: '#ef4444' };
+const ZONE_STATUS_LABELS: Record<string, string> = { idle: '待机', pending: '等待灌溉', running: '浇灌中', alarm: '告警' };
+const STATUS_COLORS: Record<string, string> = { normal: '#22c55e', warning: '#f59e0b', alarm: '#ef4444' };
+const STATUS_LABELS: Record<string, string> = { normal: '正常', warning: '预警', alarm: '告警' };
 
 const soilTrendData = [
   { t: '00:00', v: 72 }, { t: '04:00', v: 70 }, { t: '08:00', v: 67 },

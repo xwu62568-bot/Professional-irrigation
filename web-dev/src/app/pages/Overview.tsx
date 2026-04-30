@@ -50,13 +50,62 @@ import {
   buildSupplyOverview,
   buildWeatherOverview,
 } from '../data/workspaceMock';
+import { compactStationLabel, controllerGlyphSvg, sensorGlyphSvg } from '../components/mapDeviceIcons';
 
-const STATUS_COLORS: Record<Field['status'], string> = { normal: '#22c55e', warning: '#f59e0b', irrigating: '#2563eb', alarm: '#ef4444' };
-const STATUS_LABELS: Record<Field['status'], string> = { normal: '正常', warning: '预警', irrigating: '浇灌中', alarm: '告警' };
-const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', running: '#22c55e', alarm: '#ef4444' };
-const ZONE_FILL_OPACITY: Record<string, number> = { idle: 0.2, running: 0.3, alarm: 0.32 };
+const STATUS_COLORS: Record<Field['status'], string> = { normal: '#22c55e', warning: '#f59e0b', alarm: '#ef4444' };
+const STATUS_LABELS: Record<Field['status'], string> = { normal: '正常', warning: '预警', alarm: '告警' };
+const ZONE_STATUS_COLORS: Record<string, string> = { idle: '#94a3b8', pending: '#f59e0b', running: '#2563eb', alarm: '#ef4444' };
+const ZONE_FILL_OPACITY: Record<string, number> = { idle: 0.14, pending: 0.26, running: 0.34, alarm: 0.32 };
+const DEVICE_STATUS_COLORS: Record<'online' | 'offline' | 'partial' | 'alarm' | 'unknown', string> = {
+  online: '#22c55e',
+  offline: '#64748b',
+  partial: '#f59e0b',
+  alarm: '#ef4444',
+  unknown: '#94a3b8',
+};
+const DEVICE_STATUS_LABELS: Record<'online' | 'offline' | 'partial' | 'alarm' | 'unknown', string> = {
+  online: '在线',
+  offline: '离线',
+  partial: '部分离线',
+  alarm: '告警',
+  unknown: '未知',
+};
+const SWITCH_STATUS_LABELS: Record<'open' | 'closed' | 'unknown' | 'none', string> = {
+  open: '开启',
+  closed: '关闭',
+  unknown: '未知',
+  none: '无开关',
+};
 const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923];
 const OVERVIEW_MAP_CENTER_KEY = 'overview-map:last-center';
+
+function getSiteStatus(devices: Device[]) {
+  if (devices.length === 0) {
+    return 'unknown' as const;
+  }
+  if (devices.some((device) => device.status === 'alarm')) {
+    return 'alarm' as const;
+  }
+  if (devices.every((device) => device.status === 'offline')) {
+    return 'offline' as const;
+  }
+  if (devices.some((device) => device.status === 'offline')) {
+    return 'partial' as const;
+  }
+  if (devices.every((device) => device.status === 'online')) {
+    return 'online' as const;
+  }
+  return 'unknown' as const;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function getBrowserLocation(): Promise<[number, number]> {
   return new Promise((resolve, reject) => {
@@ -179,80 +228,101 @@ function setCachedCenter(center: [number, number]) {
   }
 }
 
-function getDeviceMapPoints(device: Device) {
-  if (device.bindings && device.bindings.length > 0) {
-    return device.bindings
-      .filter((binding) => binding.geoPosition)
-      .map((binding) => ({
-        key: `${device.id}:${binding.stationId}`,
-        position: binding.geoPosition!,
-      }));
-  }
-
-  if (device.geoPosition && (device.fieldId || device.zoneId)) {
-    return [{ key: device.id, position: device.geoPosition }];
-  }
-
-  return [];
-}
-
 function getOverviewDeviceMarkers(fields: Field[], devices: Device[]) {
   const markers: Array<{
     key: string;
     position: [number, number];
-    type: Device['type'] | 'fallback';
-    status: Device['status'] | 'offline';
+    type: 'controller' | 'station' | 'sensor';
+    status: 'online' | 'offline' | 'partial' | 'alarm' | 'unknown';
+    switchStatus: 'open' | 'closed' | 'unknown' | 'none';
     label: string;
+    sensorType?: Device['sensorType'];
   }> = [];
-  const positionedDeviceIds = new Set<string>();
+  const fieldIds = new Set(fields.map((field) => field.id));
+  const zoneIds = new Set(fields.flatMap((field) => field.zones.map((zone) => zone.id)));
 
   devices.forEach((device) => {
-    const points = getDeviceMapPoints(device);
-    if (points.length === 0) {
+    const belongsToVisibleField =
+      fieldIds.has(device.fieldId) ||
+      zoneIds.has(device.zoneId) ||
+      (device.bindings?.some((binding) => fieldIds.has(binding.fieldId) || zoneIds.has(binding.zoneId)) ?? false);
+
+    if (!belongsToVisibleField) {
       return;
     }
 
-    positionedDeviceIds.add(device.id);
-    points.forEach((point, index) => {
+    if (device.type === 'controller' && device.geoPosition) {
       markers.push({
-        key: point.key,
-        position: point.position,
-        type: device.type,
-        status: device.status,
-        label: index === 0 ? device.name : `${device.name} ${index + 1}`,
+        key: `controller:${device.id}`,
+        position: device.geoPosition,
+        type: 'controller',
+        status: getSiteStatus([device]),
+        switchStatus: 'none',
+        label: device.name,
       });
-    });
-  });
+    }
 
-  fields.forEach((field) => {
-    field.zones.forEach((zone) => {
-      if (!zone.geoCenter || zone.deviceIds.length === 0) {
-        return;
-      }
+    if (device.type === 'controller') {
+      (device.bindings ?? [])
+        .filter((binding) => binding.geoPosition && (fieldIds.has(binding.fieldId) || zoneIds.has(binding.zoneId)))
+        .forEach((binding) => {
+          if (!binding.geoPosition) {
+            return;
+          }
 
-      zone.deviceIds.forEach((deviceId, index) => {
-        if (positionedDeviceIds.has(deviceId)) {
-          return;
-        }
-
-        const offset = 0.00006;
-        const angle = (index % 6) * (Math.PI / 3);
-        const round = Math.floor(index / 6) + 1;
-        markers.push({
-          key: `fallback:${zone.id}:${deviceId}`,
-          position: [
-            Number((zone.geoCenter![0] + Math.cos(angle) * offset * round).toFixed(6)),
-            Number((zone.geoCenter![1] + Math.sin(angle) * offset * round).toFixed(6)),
-          ],
-          type: 'fallback',
-          status: 'offline',
-          label: zone.name,
+          markers.push({
+            key: `${device.id}:${binding.stationId}`,
+            position: binding.geoPosition,
+            type: 'station',
+            status: getSiteStatus([device]),
+            switchStatus: binding.switchStatus ?? 'unknown',
+            label: binding.stationName,
+          });
         });
+      return;
+    }
+
+    if (device.type === 'sensor' && device.geoPosition) {
+      markers.push({
+        key: `sensor:${device.id}`,
+        position: device.geoPosition,
+        type: 'sensor',
+        status: getSiteStatus([device]),
+        switchStatus: 'none',
+        label: device.name,
+        sensorType: device.sensorType,
       });
-    });
+    }
   });
 
   return markers;
+}
+
+function renderOverviewDeviceMarker(markerInfo: ReturnType<typeof getOverviewDeviceMarkers>[number]) {
+  const statusColor = DEVICE_STATUS_COLORS[markerInfo.status];
+  if (markerInfo.type === 'station') {
+    const switchColor = markerInfo.switchStatus === 'open'
+      ? '#2563eb'
+      : markerInfo.switchStatus === 'closed'
+        ? '#64748b'
+        : '#94a3b8';
+    const stationLabel = compactStationLabel(markerInfo.label);
+    return `
+      <div title="${escapeHtml(`${markerInfo.label} · ${DEVICE_STATUS_LABELS[markerInfo.status]} · 开关${SWITCH_STATUS_LABELS[markerInfo.switchStatus]}`)}" style="position:relative;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:999px;background:#fff;color:#0f172a;border:2px solid ${statusColor};box-shadow:0 8px 20px rgba(15,23,42,.22);">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:rgba(34,197,94,.12);color:#166534;border:1px solid rgba(34,197,94,.28);font-size:13px;line-height:1;font-weight:800;">${escapeHtml(stationLabel)}</span>
+        <span style="position:absolute;right:-2px;top:-2px;width:11px;height:11px;border-radius:999px;background:${statusColor};border:2px solid #fff;"></span>
+        <span style="position:absolute;left:-3px;bottom:-3px;width:15px;height:15px;border-radius:999px;background:${switchColor};border:2px solid #fff;color:#fff;font-size:9px;line-height:11px;text-align:center;font-weight:800;">${markerInfo.switchStatus === 'open' ? '开' : markerInfo.switchStatus === 'closed' ? '关' : '?'}</span>
+      </div>
+    `;
+  }
+
+  const nodeColor = markerInfo.type === 'sensor' ? '#16a34a' : '#7c3aed';
+  return `
+    <div title="${escapeHtml(`${markerInfo.label} · ${DEVICE_STATUS_LABELS[markerInfo.status]}`)}" style="position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:#fff;color:${nodeColor};border:2px solid ${statusColor};box-shadow:0 8px 20px rgba(15,23,42,.22);">
+      ${markerInfo.type === 'sensor' ? sensorGlyphSvg(markerInfo.sensorType) : controllerGlyphSvg()}
+      <span style="position:absolute;right:-3px;top:-3px;width:12px;height:12px;border-radius:999px;background:${statusColor};border:2px solid #fff;"></span>
+    </div>
+  `;
 }
 
 function InsightCard({
@@ -507,8 +577,6 @@ export function Overview() {
         return;
       }
 
-      const runningZones = field.zones.filter((zone) => zone.status === 'running');
-      const alarmZones = field.zones.filter((zone) => zone.status === 'alarm');
       const statusColor = STATUS_COLORS[field.status];
 
       const polygon = new AMap.Polygon({
@@ -576,7 +644,7 @@ export function Overview() {
       });
 
       const label = new AMap.Text({
-        text: alarmZones.length > 0 ? `${field.name} · ${alarmZones.length}区告警` : runningZones.length > 0 ? `${field.name} · ${runningZones.length}区浇灌中` : field.name,
+        text: field.name,
         position: field.geoCenter ?? field.geoBoundary[0],
         offset: new AMap.Pixel(-48, -34),
         style: {
@@ -594,24 +662,12 @@ export function Overview() {
     });
 
     getOverviewDeviceMarkers(fields, devices).forEach((markerInfo) => {
-        const fillColor = markerInfo.type === 'fallback'
-          ? '#0f172a'
-          : markerInfo.status === 'online'
-            ? '#22c55e'
-            : markerInfo.status === 'alarm'
-              ? '#ef4444'
-              : '#94a3b8';
-
         const marker = new AMap.Marker({
           position: markerInfo.position,
-          anchor: 'bottom-center',
-          content: `
-            <div title="${markerInfo.label}" style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:${fillColor};color:#fff;border:2px solid #fff;box-shadow:0 6px 16px rgba(15,23,42,.22);font-size:11px;font-weight:700;">
-              ${markerInfo.type === 'fallback' ? 'D' : markerInfo.type === 'sensor' ? 'S' : markerInfo.type === 'valve' ? 'V' : markerInfo.type === 'pump' ? 'P' : 'C'}
-            </div>
-          `,
-          offset: new AMap.Pixel(-12, -12),
-          zIndex: 45,
+          anchor: 'center',
+          content: renderOverviewDeviceMarker(markerInfo),
+          offset: new AMap.Pixel(0, 0),
+          zIndex: markerInfo.type === 'station' ? 45 : 48,
         });
         marker.setMap(map);
         nextOverlays.push(marker);
@@ -834,7 +890,7 @@ export function Overview() {
               <div>
                 <h3 style={{ color: '#0f172a', fontSize: 15, fontWeight: 600 }}>地块态势地图</h3>
                 <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>
-                  地块状态主视图，分区浇灌和告警作为辅助图层
+                  地块水分主视图，分区灌溉状态作为辅助图层
                 </p>
               </div>
               <button
@@ -875,38 +931,108 @@ export function Overview() {
                   }}
                 >
                   <div style={{ color: '#0f172a', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>图例</div>
-                  <div className="flex flex-col gap-1.5">
-                    {Object.entries(STATUS_LABELS).map(([status, label]) => (
-                      <div key={status} className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
-                        <span
-                          className="inline-block rounded-full"
-                          style={{ width: 9, height: 9, background: STATUS_COLORS[status as Field['status']] }}
-                        />
-                        <span>地块填充：{label}</span>
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>地块状态</div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          ['normal', '正常'],
+                          ['warning', '预警'],
+                          ['alarm', '告警'],
+                        ].map(([status, label]) => (
+                          <div key={status} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                            <span
+                              className="inline-flex items-center justify-center rounded-full"
+                              style={{
+                                width: 14,
+                                height: 14,
+                                background: '#ffffff',
+                                border: `2px solid ${STATUS_COLORS[status as Field['status']]}`,
+                              }}
+                            />
+                            <span>{label}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    {[
-                      ['idle', '分区填充：待机'],
-                      ['running', '分区填充：浇灌中'],
-                      ['alarm', '分区填充：告警'],
-                    ].map(([status, label]) => (
-                      <div key={status} className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
-                        <span
-                          className="inline-block rounded-sm"
-                          style={{
-                            width: 14,
-                            height: 9,
-                            background: ZONE_STATUS_COLORS[status],
-                            opacity: ZONE_FILL_OPACITY[status] ?? 0.2,
-                            border: `2px solid ${ZONE_STATUS_COLORS[status]}`,
-                          }}
-                        />
-                        <span>{label}</span>
+                    </div>
+
+                    <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                      <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>分区状态</div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          ['idle', '待机'],
+                          ['pending', '等待'],
+                          ['running', '浇灌中'],
+                          ['alarm', '告警'],
+                        ].map(([status, label]) => (
+                          <div key={status} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                            <span
+                              className="inline-block rounded-sm"
+                              style={{
+                                width: 14,
+                                height: 9,
+                                background: ZONE_STATUS_COLORS[status],
+                                opacity: ZONE_FILL_OPACITY[status] ?? 0.2,
+                                border: `2px solid ${ZONE_STATUS_COLORS[status]}`,
+                              }}
+                            />
+                            <span>{label}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    <div className="flex items-center gap-2" style={{ color: '#475569', fontSize: 11 }}>
-                      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 16, height: 16, background: '#22c55e', color: '#fff', fontSize: 9, fontWeight: 700 }}>V</span>
-                      <span>在线设备点</span>
+                    </div>
+
+                    <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                      <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>设备状态</div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          ['online', '在线'],
+                          ['offline', '离线'],
+                          ['partial', '部分离线'],
+                          ['alarm', '告警'],
+                        ].map(([status, label]) => (
+                          <div key={status} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                            <span
+                              className="inline-flex items-center justify-center rounded-full"
+                              style={{
+                                width: 14,
+                                height: 14,
+                                background: '#ffffff',
+                                border: `2px solid ${DEVICE_STATUS_COLORS[status as keyof typeof DEVICE_STATUS_COLORS]}`,
+                              }}
+                            />
+                            <span>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                      <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>开关状态</div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          ['open', '开启', '#2563eb'],
+                          ['closed', '关闭', '#64748b'],
+                          ['unknown', '未知', '#94a3b8'],
+                        ].map(([key, label, color]) => (
+                          <div key={key} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                            <span
+                              className="inline-flex items-center justify-center rounded-full"
+                              style={{
+                                width: 16,
+                                height: 16,
+                                background: color,
+                                color: '#ffffff',
+                                fontSize: 10,
+                                fontWeight: 800,
+                              }}
+                            >
+                              {key === 'open' ? '开' : key === 'closed' ? '关' : '?'}
+                            </span>
+                            <span>{label}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>

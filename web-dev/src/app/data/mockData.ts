@@ -7,7 +7,7 @@ export interface Field {
   area: number;
   kc: number;
   irrigationEfficiency: number;
-  status: 'normal' | 'warning' | 'irrigating' | 'alarm';
+  status: 'normal' | 'warning' | 'alarm';
   soilMoisture: number;
   soilTemperature: number;
   flowRate: number;
@@ -29,8 +29,9 @@ export interface Zone {
   id: string;
   fieldId: string;
   name: string;
+  siteNumber?: number;
   stationNo: string;
-  status: 'idle' | 'running' | 'alarm';
+  status: 'idle' | 'pending' | 'running' | 'alarm';
   duration: number;
   soilMoisture: number;
   polygon: [number, number][];
@@ -44,12 +45,14 @@ export interface Device {
   id: string;
   name: string;
   model: string;
-  type: 'valve' | 'sensor' | 'controller' | 'pump';
+  type: 'controller' | 'sensor';
   status: 'online' | 'offline' | 'alarm';
   position: [number, number];
   geoPosition?: [number, number];
   zoneId: string;
   fieldId: string;
+  channelCount?: 2 | 4 | 6 | 8;
+  sensorType?: 'soil_moisture' | 'rainfall' | 'temperature' | 'weather';
   stationNo?: string;
   lastSeen: string;
   signalStrength?: number;
@@ -63,6 +66,7 @@ export interface Device {
     zoneId: string;
     stationId: string;
     stationName: string;
+    switchStatus?: 'open' | 'closed' | 'unknown';
     geoPosition?: [number, number];
   }>;
 }
@@ -139,16 +143,16 @@ export const mockFields: Field[] = [
     center: [190, 130],
     zones: [
       {
-        id: 'z1', fieldId: 'f1', name: 'A-1区', stationNo: 'S01',
-        status: 'idle', duration: 45, soilMoisture: 65,
+        id: 'z1', fieldId: 'f1', name: 'A-1区', siteNumber: 1, stationNo: 'S01',
+        status: 'running', duration: 45, soilMoisture: 65,
         polygon: [[80, 60], [190, 51], [195, 196], [70, 196]],
-        center: [130, 128], deviceIds: ['d1', 'd2']
+        center: [130, 128], deviceIds: []
       },
       {
-        id: 'z2', fieldId: 'f1', name: 'A-2区', stationNo: 'S02',
-        status: 'running', duration: 50, soilMoisture: 71,
+        id: 'z2', fieldId: 'f1', name: 'A-2区', siteNumber: 2, stationNo: 'S02',
+        status: 'pending', duration: 50, soilMoisture: 71,
         polygon: [[190, 51], [300, 42], [320, 188], [258, 220], [195, 196]],
-        center: [255, 128], deviceIds: ['d3']
+        center: [255, 128], deviceIds: []
       },
     ]
   },
@@ -176,16 +180,16 @@ export const mockFields: Field[] = [
     center: [472, 144],
     zones: [
       {
-        id: 'z3', fieldId: 'f2', name: 'B-1区', stationNo: 'S03',
+        id: 'z3', fieldId: 'f2', name: 'B-1区', siteNumber: 3, stationNo: 'S03',
         status: 'alarm', duration: 60, soilMoisture: 38,
         polygon: [[360, 46], [478, 56], [468, 238], [348, 224]],
-        center: [410, 141], deviceIds: ['d4', 'd5']
+        center: [410, 141], deviceIds: []
       },
       {
-        id: 'z4', fieldId: 'f2', name: 'B-2区', stationNo: 'S04',
+        id: 'z4', fieldId: 'f2', name: 'B-2区', siteNumber: 4, stationNo: 'S04',
         status: 'idle', duration: 60, soilMoisture: 46,
         polygon: [[478, 56], [600, 68], [580, 238], [468, 238]],
-        center: [533, 141], deviceIds: ['d6']
+        center: [533, 141], deviceIds: []
       },
     ]
   },
@@ -213,22 +217,22 @@ export const mockFields: Field[] = [
     center: [250, 370],
     zones: [
       {
-        id: 'z5', fieldId: 'f3', name: 'C-1区', stationNo: 'S05',
+        id: 'z5', fieldId: 'f3', name: 'C-1区', siteNumber: 5, stationNo: 'S05',
         status: 'alarm', duration: 60, soilMoisture: 28,
         polygon: [[75, 298], [255, 288], [248, 442], [60, 412]],
-        center: [155, 370], deviceIds: ['d7', 'd8']
+        center: [155, 370], deviceIds: []
       },
       {
-        id: 'z6', fieldId: 'f3', name: 'C-2区', stationNo: 'S06',
+        id: 'z6', fieldId: 'f3', name: 'C-2区', siteNumber: 6, stationNo: 'S06',
         status: 'idle', duration: 60, soilMoisture: 32,
         polygon: [[255, 288], [445, 278], [462, 442], [248, 442]],
-        center: [352, 370], deviceIds: ['d9']
+        center: [352, 370], deviceIds: []
       },
       {
-        id: 'z7', fieldId: 'f3', name: 'C-3区', stationNo: 'S07',
+        id: 'z7', fieldId: 'f3', name: 'C-3区', siteNumber: 7, stationNo: 'S07',
         status: 'idle', duration: 60, soilMoisture: 34,
         polygon: [[248, 442], [462, 442], [195, 460]],
-        center: [302, 448], deviceIds: ['d10']
+        center: [302, 448], deviceIds: []
       },
     ]
   },
@@ -256,37 +260,87 @@ export const mockFields: Field[] = [
     center: [648, 370],
     zones: [
       {
-        id: 'z8', fieldId: 'f4', name: 'D-1区', stationNo: 'S08',
+        id: 'z8', fieldId: 'f4', name: 'D-1区', siteNumber: 8, stationNo: 'S08',
         status: 'idle', duration: 40, soilMoisture: 55,
         polygon: [[525, 308], [640, 300], [650, 448], [542, 448]],
-        center: [588, 376], deviceIds: ['d11', 'd12']
+        center: [588, 376], deviceIds: []
       },
       {
-        id: 'z9', fieldId: 'f4', name: 'D-2区', stationNo: 'S09',
+        id: 'z9', fieldId: 'f4', name: 'D-2区', siteNumber: 9, stationNo: 'S09',
         status: 'idle', duration: 35, soilMoisture: 55,
         polygon: [[640, 300], [755, 292], [772, 432], [650, 448]],
-        center: [709, 368], deviceIds: ['d13']
+        center: [709, 368], deviceIds: []
       },
     ]
   }
 ];
 
 export const mockDevices: Device[] = [
-  { id: 'd1', name: 'A-1区电磁阀', model: 'HV-200', type: 'valve', status: 'online', position: [105, 108], zoneId: 'z1', fieldId: 'f1', stationNo: 'S01', lastSeen: '刚刚', signalStrength: 92 },
-  { id: 'd2', name: 'A-1区土壤传感器', model: 'SS-100', type: 'sensor', status: 'online', position: [145, 158], zoneId: 'z1', fieldId: 'f1', stationNo: 'S01', lastSeen: '2分钟前', signalStrength: 88, batteryLevel: 75 },
-  { id: 'd3', name: 'A-2区电磁阀', model: 'HV-200', type: 'valve', status: 'online', position: [265, 118], zoneId: 'z2', fieldId: 'f1', stationNo: 'S02', lastSeen: '刚刚', signalStrength: 85 },
-  { id: 'd4', name: 'B-1区电磁阀', model: 'HV-300', type: 'valve', status: 'alarm', position: [392, 121], zoneId: 'z3', fieldId: 'f2', stationNo: 'S03', lastSeen: '3分钟前', signalStrength: 45 },
-  { id: 'd5', name: 'B-1区传感器', model: 'SS-200', type: 'sensor', status: 'online', position: [428, 161], zoneId: 'z3', fieldId: 'f2', stationNo: 'S03', lastSeen: '1分钟前', signalStrength: 78, batteryLevel: 40 },
-  { id: 'd6', name: 'B-2区电磁阀', model: 'HV-300', type: 'valve', status: 'online', position: [545, 131], zoneId: 'z4', fieldId: 'f2', stationNo: 'S04', lastSeen: '刚刚', signalStrength: 90 },
-  { id: 'd7', name: 'C-1区电磁阀', model: 'HV-500', type: 'valve', status: 'offline', position: [120, 348], zoneId: 'z5', fieldId: 'f3', stationNo: 'S05', lastSeen: '2小时前', signalStrength: 0 },
-  { id: 'd8', name: 'C-1区传感器', model: 'SS-300', type: 'sensor', status: 'online', position: [175, 388], zoneId: 'z5', fieldId: 'f3', stationNo: 'S05', lastSeen: '5分钟前', signalStrength: 65, batteryLevel: 20 },
-  { id: 'd9', name: 'C-2区电磁阀', model: 'HV-500', type: 'valve', status: 'online', position: [365, 358], zoneId: 'z6', fieldId: 'f3', stationNo: 'S06', lastSeen: '刚刚', signalStrength: 82 },
-  { id: 'd10', name: 'C-3区电磁阀', model: 'HV-500', type: 'valve', status: 'online', position: [302, 440], zoneId: 'z7', fieldId: 'f3', stationNo: 'S07', lastSeen: '刚刚', signalStrength: 79 },
-  { id: 'd11', name: 'D-1区电磁阀', model: 'HV-200', type: 'valve', status: 'online', position: [565, 358], zoneId: 'z8', fieldId: 'f4', stationNo: 'S08', lastSeen: '刚刚', signalStrength: 95 },
-  { id: 'd12', name: 'D-1区传感器', model: 'SS-100', type: 'sensor', status: 'online', position: [608, 398], zoneId: 'z8', fieldId: 'f4', stationNo: 'S08', lastSeen: '1分钟前', signalStrength: 91, batteryLevel: 88 },
-  { id: 'd13', name: 'D-2区电磁阀', model: 'HV-200', type: 'valve', status: 'online', position: [718, 358], zoneId: 'z9', fieldId: 'f4', stationNo: 'S09', lastSeen: '刚刚', signalStrength: 87 },
-  { id: 'd14', name: '主控制器', model: 'RC-1000', type: 'controller', status: 'online', position: [450, 490], zoneId: '', fieldId: '', lastSeen: '刚刚', signalStrength: 98 },
-  { id: 'd15', name: '主水泵', model: 'WP-500', type: 'pump', status: 'online', position: [480, 490], zoneId: '', fieldId: '', lastSeen: '刚刚', signalStrength: 98 },
+  {
+    id: 'sim-ctrl-2',
+    name: '2路控制器',
+    model: 'RC-2CH',
+    type: 'controller',
+    status: 'online',
+    position: [0, 0],
+    zoneId: '',
+    fieldId: '',
+    channelCount: 2,
+    lastSeen: '刚刚',
+    signalStrength: 96,
+    stations: Array.from({ length: 2 }, (_, index) => ({ id: `CH${index + 1}`, name: `${index + 1}路站点` })),
+    bindings: [],
+  },
+  {
+    id: 'sim-ctrl-4',
+    name: '4路控制器',
+    model: 'RC-4CH',
+    type: 'controller',
+    status: 'online',
+    position: [0, 0],
+    zoneId: '',
+    fieldId: '',
+    channelCount: 4,
+    lastSeen: '刚刚',
+    signalStrength: 92,
+    stations: Array.from({ length: 4 }, (_, index) => ({ id: `CH${index + 1}`, name: `${index + 1}路站点` })),
+    bindings: [],
+  },
+  {
+    id: 'sim-ctrl-6',
+    name: '6路控制器',
+    model: 'RC-6CH',
+    type: 'controller',
+    status: 'offline',
+    position: [0, 0],
+    zoneId: '',
+    fieldId: '',
+    channelCount: 6,
+    lastSeen: '2小时前',
+    signalStrength: 0,
+    stations: Array.from({ length: 6 }, (_, index) => ({ id: `CH${index + 1}`, name: `${index + 1}路站点` })),
+    bindings: [],
+  },
+  {
+    id: 'sim-ctrl-8',
+    name: '8路控制器',
+    model: 'RC-8CH',
+    type: 'controller',
+    status: 'online',
+    position: [0, 0],
+    zoneId: '',
+    fieldId: '',
+    channelCount: 8,
+    lastSeen: '刚刚',
+    signalStrength: 98,
+    stations: Array.from({ length: 8 }, (_, index) => ({ id: `CH${index + 1}`, name: `${index + 1}路站点` })),
+    bindings: [],
+  },
+  { id: 'sim-soil-1', name: '土壤湿度传感器 1', model: 'SS-100', type: 'sensor', sensorType: 'soil_moisture', status: 'online', position: [0, 0], zoneId: '', fieldId: '', lastSeen: '2分钟前', signalStrength: 88, batteryLevel: 75 },
+  { id: 'sim-soil-2', name: '土壤湿度传感器 2', model: 'SS-200', type: 'sensor', sensorType: 'soil_moisture', status: 'online', position: [0, 0], zoneId: '', fieldId: '', lastSeen: '1分钟前', signalStrength: 78, batteryLevel: 40 },
+  { id: 'sim-soil-3', name: '土壤湿度传感器 3', model: 'SS-300', type: 'sensor', sensorType: 'soil_moisture', status: 'alarm', position: [0, 0], zoneId: '', fieldId: '', lastSeen: '5分钟前', signalStrength: 65, batteryLevel: 20 },
+  { id: 'sim-rain-1', name: '雨量传感器 1', model: 'RS-100', type: 'sensor', sensorType: 'rainfall', status: 'online', position: [0, 0], zoneId: '', fieldId: '', lastSeen: '1分钟前', signalStrength: 91, batteryLevel: 88 },
+  { id: 'sim-rain-2', name: '雨量传感器 2', model: 'RS-200', type: 'sensor', sensorType: 'rainfall', status: 'offline', position: [0, 0], zoneId: '', fieldId: '', lastSeen: '3小时前', signalStrength: 0, batteryLevel: 64 },
 ];
 
 export const mockPlans: Plan[] = [

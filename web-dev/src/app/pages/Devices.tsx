@@ -6,8 +6,6 @@ import {
   Battery,
   ChevronRight,
   Cpu,
-  Droplets,
-  Gauge,
   Search,
   Signal,
   Wifi,
@@ -18,24 +16,18 @@ import { Device } from '../data/mockData';
 import { getWifiDemoMissingConfig, wifiDemoDevice } from '../../lib/wifiDemoConfig';
 
 const TYPE_ICONS: Record<string, any> = {
-  valve: Droplets,
   sensor: Activity,
   controller: Cpu,
-  pump: Gauge,
 };
 
 const TYPE_LABELS: Record<string, string> = {
-  valve: '电磁阀',
   sensor: '传感器',
-  controller: '控制器',
-  pump: '水泵',
+  controller: '多路控制器',
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  valve: '#0ea5e9',
   sensor: '#16a34a',
   controller: '#8b5cf6',
-  pump: '#f59e0b',
 };
 
 const STATUS_CONFIG = {

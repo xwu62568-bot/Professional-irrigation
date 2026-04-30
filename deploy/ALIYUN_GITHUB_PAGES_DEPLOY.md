@@ -155,6 +155,15 @@ docker compose \
   up -d --build
 ```
 
+如果只重建了 `mqtt-gateway-service` / `execution-service`，需要重启一次 Nginx，让它重新解析容器 IP，否则可能出现 `502 Bad Gateway`：
+
+```bash
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  restart nginx
+```
+
 查看状态：
 
 ```bash
@@ -233,6 +242,11 @@ docker compose \
   --project-directory /opt/irrigation2.0 \
   -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
   up -d --build
+
+docker compose \
+  --project-directory /opt/irrigation2.0 \
+  -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
+  restart nginx
 ```
 
 停止：

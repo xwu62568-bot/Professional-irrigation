@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  AlertTriangle, ArrowRight, Crosshair, Eye, Layers, MapPinned, Pencil, Plus,
-  RotateCcw, Save, Trash2, X
+  Activity, AlertTriangle, ArrowRight, Bug, Crosshair, Eye, Layers, MapPinned, Pencil,
+  Play, Plus, RotateCcw, Save, Square, Trash2, X
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import type { Device, Field } from '../data/mockData';
 import type { GeoPoint } from '../data/fieldGeo';
+import { compactStationLabel, controllerGlyphSvg, getStationDisplayValue, sensorGlyphSvg } from '../components/mapDeviceIcons';
 import {
   createFieldInSupabase,
   createZoneInSupabase,
@@ -30,36 +31,127 @@ type ZoneDeviceDraft = {
   key: string;
   deviceId: string;
   deviceName: string;
+  deviceType: Device['type'];
+  sensorType?: Device['sensorType'];
   stationId: string;
   stationName: string;
+  switchStatus: SiteSwitchStatus;
   position: GeoPoint;
+};
+
+type DeviceMapPointType = 'controller' | 'controller_station' | 'sensor';
+type SiteStatus = 'online' | 'offline' | 'partial' | 'alarm' | 'unknown';
+type SiteSwitchStatus = 'open' | 'closed' | 'unknown' | 'none';
+type DebugRunStatus = 'idle' | 'checking' | 'ok' | 'warning' | 'error';
+type DebugPanelMode = 'overview' | 'debug';
+type DebugTargetType = 'controller' | 'station' | 'sensor';
+type DeviceMapPoint = {
+  key: string;
+  type: DeviceMapPointType;
+  fieldId?: string;
+  zoneId?: string;
+  name: string;
+  position: GeoPoint;
+  devices: Device[];
+  status: SiteStatus;
+  switchStatus: SiteSwitchStatus;
+};
+type DebugTarget = {
+  key: string;
+  type: DebugTargetType;
+  fieldId: string;
+  zoneId?: string;
+  deviceId: string;
+  stationId?: string;
+  label: string;
+  subtitle: string;
+  status: SiteStatus;
+  switchStatus: SiteSwitchStatus;
+  position?: GeoPoint;
+};
+type DebugRunRecord = {
+  status: DebugRunStatus;
+  message: string;
+  checkedAt?: string;
 };
 
 const STATUS_COLORS: Record<Field['status'], string> = {
   normal: '#22c55e',
   warning: '#f59e0b',
-  irrigating: '#2563eb',
   alarm: '#ef4444',
 };
 
 const STATUS_LABELS: Record<Field['status'], string> = {
   normal: '正常',
   warning: '预警',
-  irrigating: '浇灌中',
   alarm: '告警',
 };
 
 const ZONE_STATUS_COLORS = {
   idle: '#94a3b8',
-  running: '#22c55e',
+  pending: '#f59e0b',
+  running: '#2563eb',
   alarm: '#ef4444',
 } as const;
 
 const ZONE_FILL_OPACITY = {
-  idle: 0.2,
-  running: 0.3,
+  idle: 0.14,
+  pending: 0.26,
+  running: 0.34,
   alarm: 0.32,
 } as const;
+
+const ZONE_STATUS_LABELS = {
+  idle: '待机',
+  pending: '等待灌溉',
+  running: '浇灌中',
+  alarm: '告警',
+} as const;
+
+const SITE_STATUS_COLORS: Record<SiteStatus, string> = {
+  online: '#22c55e',
+  offline: '#64748b',
+  partial: '#f59e0b',
+  alarm: '#ef4444',
+  unknown: '#94a3b8',
+};
+
+const SITE_STATUS_LABELS: Record<SiteStatus, string> = {
+  online: '在线',
+  offline: '离线',
+  partial: '部分离线',
+  alarm: '告警',
+  unknown: '未知',
+};
+
+const SITE_SWITCH_LABELS: Record<SiteSwitchStatus, string> = {
+  open: '开启',
+  closed: '关闭',
+  unknown: '未知',
+  none: '无开关',
+};
+
+const DEBUG_STATUS_COLORS: Record<DebugRunStatus, string> = {
+  idle: '#94a3b8',
+  checking: '#2563eb',
+  ok: '#16a34a',
+  warning: '#f59e0b',
+  error: '#ef4444',
+};
+
+const DEBUG_STATUS_LABELS: Record<DebugRunStatus, string> = {
+  idle: '未测试',
+  checking: '检测中',
+  ok: '正常',
+  warning: '待排查',
+  error: '异常',
+};
+
+const DEVICE_MAP_POINT_LABELS: Record<DeviceMapPointType, string> = {
+  controller_station: '控制器站点',
+  controller: '控制器',
+  sensor: '传感器',
+};
 
 const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923];
 const LAST_MAP_CENTER_KEY = 'field-map:last-center';
@@ -165,23 +257,24 @@ function toAmapPath(boundary: GeoPoint[]) {
   return boundary.map(([lng, lat]) => [lng, lat]);
 }
 
-function parseSiteNumber(input: string, field: Field) {
-  const direct = Number(input.replace(/[^\d]/g, ''));
-  if (Number.isFinite(direct) && direct > 0) {
-    return direct;
-  }
+function getNextSiteNumber(field: Field, editingZoneId?: string | null) {
+  return field.zones.reduce((max, zone) => {
+    if (editingZoneId && zone.id === editingZoneId) {
+      return max;
+    }
 
-  const next = field.zones.reduce((max, zone) => {
-    const value = Number(zone.stationNo.replace(/[^\d]/g, ''));
+    const value = zone.siteNumber ?? Number(zone.stationNo.replace(/[^\d]/g, ''));
     return Number.isFinite(value) ? Math.max(max, value) : max;
-  }, 0);
-
-  return next + 1;
+  }, 0) + 1;
 }
 
 function getDeviceStations(device: Device) {
   if (device.stations && device.stations.length > 0) {
     return device.stations;
+  }
+
+  if (device.type === 'sensor') {
+    return [{ id: device.id, name: device.name }];
   }
 
   if (device.stationNo) {
@@ -260,30 +353,6 @@ function areBoundariesEqual(a: GeoPoint[] | undefined, b: GeoPoint[]) {
   return a.every((point, index) => point[0] === b[index][0] && point[1] === b[index][1]);
 }
 
-function getDeviceMapPoints(device: Device) {
-  if (device.bindings && device.bindings.length > 0) {
-    return device.bindings
-      .filter((binding) => binding.geoPosition)
-      .map((binding) => ({
-        key: `${device.id}:${binding.stationId}`,
-        position: binding.geoPosition!,
-        fieldId: binding.fieldId,
-        zoneId: binding.zoneId,
-      }));
-  }
-
-  if (device.geoPosition && (device.fieldId || device.zoneId)) {
-    return [{
-      key: device.id,
-      position: device.geoPosition,
-      fieldId: device.fieldId,
-      zoneId: device.zoneId,
-    }];
-  }
-
-  return [];
-}
-
 function shouldHideDevicePointDuringEdit(point: { fieldId?: string; zoneId?: string }, editingFieldId: string | null, editingZoneId: string | null) {
   if (editingZoneId && point.zoneId === editingZoneId) {
     return true;
@@ -294,6 +363,353 @@ function shouldHideDevicePointDuringEdit(point: { fieldId?: string; zoneId?: str
   }
 
   return false;
+}
+
+function getSiteStatus(devices: Device[]): SiteStatus {
+  if (devices.length === 0) {
+    return 'unknown';
+  }
+  if (devices.some((device) => device.status === 'alarm')) {
+    return 'alarm';
+  }
+  if (devices.every((device) => device.status === 'offline')) {
+    return 'offline';
+  }
+  if (devices.some((device) => device.status === 'offline')) {
+    return 'partial';
+  }
+  if (devices.every((device) => device.status === 'online')) {
+    return 'online';
+  }
+  return 'unknown';
+}
+
+function getBindingSwitchStatus(binding: NonNullable<Device['bindings']>[number]): SiteSwitchStatus {
+  return binding.switchStatus ?? 'unknown';
+}
+
+function getControllerStationPointKey(binding: {
+  fieldId: string;
+  zoneId: string;
+  stationId: string;
+  geoPosition: GeoPoint;
+}) {
+  return `${binding.fieldId}:${binding.zoneId}:${binding.stationId}:${binding.geoPosition.join(',')}`;
+}
+
+function getControllerStationMapPoints(devices: Device[]): DeviceMapPoint[] {
+  const sites = new Map<string, DeviceMapPoint>();
+
+  devices.forEach((device) => {
+    if (device.type !== 'controller') {
+      return;
+    }
+
+    const bindings = device.bindings?.filter((binding) => binding.geoPosition) ?? [];
+    if (bindings.length === 0 && device.geoPosition && (device.fieldId || device.zoneId)) {
+      bindings.push({
+        fieldId: device.fieldId,
+        zoneId: device.zoneId,
+        stationId: device.stationNo ?? device.id,
+        stationName: device.stationNo ?? device.name,
+        geoPosition: device.geoPosition,
+      });
+    }
+
+    bindings.forEach((binding) => {
+      if (!binding.geoPosition) {
+        return;
+      }
+
+      const key = getControllerStationPointKey({
+        fieldId: binding.fieldId,
+        zoneId: binding.zoneId,
+        stationId: binding.stationId,
+        geoPosition: binding.geoPosition,
+      });
+      const site = sites.get(key) ?? {
+        key,
+        type: 'controller_station' as DeviceMapPointType,
+        fieldId: binding.fieldId,
+        zoneId: binding.zoneId,
+        name: binding.stationName,
+        position: binding.geoPosition,
+        devices: [],
+        status: 'unknown' as SiteStatus,
+        switchStatus: getBindingSwitchStatus(binding),
+      };
+      site.devices.push(device);
+      site.status = getSiteStatus(site.devices);
+      site.switchStatus = getBindingSwitchStatus(binding);
+      sites.set(key, site);
+    });
+  });
+
+  return [...sites.values()];
+}
+
+function getFieldDebugTargets(field: Field, devices: Device[]) {
+  const zoneIds = new Set(field.zones.map((zone) => zone.id));
+  const targets: DebugTarget[] = [];
+  const seen = new Set<string>();
+
+  devices.forEach((device) => {
+    const belongsToField =
+      device.fieldId === field.id ||
+      zoneIds.has(device.zoneId) ||
+      (device.bindings?.some((binding) => binding.fieldId === field.id || zoneIds.has(binding.zoneId)) ?? false);
+
+    if (!belongsToField) {
+      return;
+    }
+
+    if (device.type === 'controller') {
+      const controllerKey = `controller:${device.id}`;
+      if (!seen.has(controllerKey)) {
+        seen.add(controllerKey);
+        targets.push({
+          key: controllerKey,
+          type: 'controller',
+          fieldId: field.id,
+          zoneId: device.zoneId || undefined,
+          deviceId: device.id,
+          label: device.name,
+          subtitle: `${device.model}${device.channelCount ? ` · ${device.channelCount}路` : ''}`,
+          status: getSiteStatus([device]),
+          switchStatus: 'none',
+          position: device.geoPosition,
+        });
+      }
+
+      (device.bindings ?? [])
+        .filter((binding) => binding.geoPosition && (binding.fieldId === field.id || zoneIds.has(binding.zoneId)))
+        .forEach((binding) => {
+          if (!binding.geoPosition) {
+            return;
+          }
+
+          const key = getControllerStationPointKey({
+            fieldId: binding.fieldId,
+            zoneId: binding.zoneId,
+            stationId: binding.stationId,
+            geoPosition: binding.geoPosition,
+          });
+          if (seen.has(key)) {
+            return;
+          }
+
+          seen.add(key);
+          targets.push({
+            key,
+            type: 'station',
+            fieldId: binding.fieldId,
+            zoneId: binding.zoneId,
+            deviceId: device.id,
+            stationId: binding.stationId,
+            label: binding.stationName,
+            subtitle: `${device.name} · 开关${SITE_SWITCH_LABELS[getBindingSwitchStatus(binding)]}`,
+            status: getSiteStatus([device]),
+            switchStatus: getBindingSwitchStatus(binding),
+            position: binding.geoPosition,
+          });
+        });
+      return;
+    }
+
+    const sensorKey = `sensor:${device.id}`;
+    if (seen.has(sensorKey)) {
+      return;
+    }
+    seen.add(sensorKey);
+    targets.push({
+      key: sensorKey,
+      type: 'sensor',
+      fieldId: field.id,
+      zoneId: device.zoneId || undefined,
+      deviceId: device.id,
+      label: device.name,
+      subtitle: device.sensorType === 'rainfall'
+        ? '雨量传感器'
+        : device.sensorType === 'temperature'
+          ? '温度传感器'
+          : '土壤传感器',
+      status: getSiteStatus([device]),
+      switchStatus: 'none',
+      position: device.geoPosition,
+    });
+  });
+
+  return targets;
+}
+
+function getFieldDevices(field: Field, devices: Device[]) {
+  const zoneIds = field.zones.map((zone) => zone.id);
+  return devices.filter((device) =>
+    device.fieldId === field.id ||
+    zoneIds.includes(device.zoneId) ||
+    (device.bindings?.some((binding) => binding.fieldId === field.id || zoneIds.includes(binding.zoneId)) ?? false),
+  );
+}
+
+function getDebugOutcome(target: DebugTarget): Pick<DebugRunRecord, 'status' | 'message'> {
+  if (target.status === 'alarm') {
+    return { status: 'error', message: '设备告警，需现场排查供电与通信。' };
+  }
+  if (target.status === 'offline') {
+    return { status: 'error', message: '设备离线，未收到有效心跳。' };
+  }
+  if (target.status === 'partial') {
+    return { status: 'warning', message: '存在部分离线，建议继续检查链路。' };
+  }
+  if (target.status === 'unknown') {
+    return { status: 'warning', message: '状态未知，建议重新触发一次测试。' };
+  }
+  if (target.type === 'station') {
+    if (target.switchStatus === 'unknown') {
+      return { status: 'warning', message: '站点在线，但阀门开关状态未确认。' };
+    }
+    if (target.switchStatus === 'open') {
+      return { status: 'ok', message: '站点在线，阀门已开启并响应。' };
+    }
+    if (target.switchStatus === 'closed') {
+      return { status: 'ok', message: '站点在线，阀门关闭状态正常。' };
+    }
+  }
+  if (target.type === 'controller') {
+    return { status: 'ok', message: '控制器通信正常，可继续联调下级站点。' };
+  }
+  return { status: 'ok', message: '传感器在线，采集链路正常。' };
+}
+
+function getDebugBadge(record?: DebugRunRecord | null) {
+  if (!record || record.status === 'idle') {
+    return null;
+  }
+
+  const color = DEBUG_STATUS_COLORS[record.status];
+  const content = record.status === 'checking'
+    ? '测'
+    : record.status === 'ok'
+      ? '好'
+      : record.status === 'warning'
+        ? '查'
+        : '异';
+
+  return {
+    color,
+    content,
+    title: `${DEBUG_STATUS_LABELS[record.status]}${record.message ? ` · ${record.message}` : ''}`,
+  };
+}
+
+function getControllerMapPoints(devices: Device[]): DeviceMapPoint[] {
+  return devices
+    .filter((device) => device.type === 'controller' && device.geoPosition)
+    .map((device) => {
+      const primaryBinding = device.bindings?.find((binding) => binding.fieldId || binding.zoneId);
+      return {
+        key: `controller:${device.id}`,
+        type: 'controller' as DeviceMapPointType,
+        fieldId: device.fieldId || primaryBinding?.fieldId || undefined,
+        zoneId: device.zoneId || primaryBinding?.zoneId || undefined,
+        name: device.name,
+        position: device.geoPosition!,
+        devices: [device],
+        status: getSiteStatus([device]),
+        switchStatus: 'none' as SiteSwitchStatus,
+      };
+    });
+}
+
+function getSensorMapPoints(devices: Device[]): DeviceMapPoint[] {
+  return devices
+    .filter((device) => device.type === 'sensor' && device.geoPosition)
+    .map((device) => {
+      const primaryBinding = device.bindings?.find((binding) => binding.fieldId || binding.zoneId);
+      return {
+        key: `sensor:${device.id}`,
+        type: 'sensor' as DeviceMapPointType,
+        fieldId: device.fieldId || primaryBinding?.fieldId || undefined,
+        zoneId: device.zoneId || primaryBinding?.zoneId || undefined,
+        name: device.name,
+        position: device.geoPosition!,
+        devices: [device],
+        status: getSiteStatus([device]),
+        switchStatus: 'none' as SiteSwitchStatus,
+      };
+    });
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderControllerStationMarker(site: DeviceMapPoint, debugRecord?: DebugRunRecord | null) {
+  const statusColor = SITE_STATUS_COLORS[site.status];
+  const switchLabel = SITE_SWITCH_LABELS[site.switchStatus];
+  const switchColor = site.switchStatus === 'open'
+    ? '#2563eb'
+    : site.switchStatus === 'closed'
+      ? '#64748b'
+      : '#94a3b8';
+  const stationLabel = compactStationLabel(site.name);
+  const debugBadge = getDebugBadge(debugRecord);
+
+  return `
+    <div title="${escapeHtml(debugBadge?.title ?? `${site.name} · ${SITE_STATUS_LABELS[site.status]} · 开关${switchLabel}`)}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;">
+      <div style="position:relative;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:999px;background:#fff;color:#0f172a;border:2px solid ${debugBadge?.color ?? statusColor};box-shadow:0 8px 20px rgba(15,23,42,.22);">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:rgba(34,197,94,.12);color:#166534;border:1px solid rgba(34,197,94,.28);font-size:13px;line-height:1;font-weight:800;">${escapeHtml(stationLabel)}</span>
+        <span style="position:absolute;right:-2px;top:-2px;width:11px;height:11px;border-radius:999px;background:${statusColor};border:2px solid #fff;"></span>
+        <span style="position:absolute;left:-3px;bottom:-3px;width:15px;height:15px;border-radius:999px;background:${switchColor};border:2px solid #fff;color:#fff;font-size:9px;line-height:11px;text-align:center;font-weight:800;">${site.switchStatus === 'open' ? '开' : site.switchStatus === 'closed' ? '关' : '?'}</span>
+        ${debugBadge ? `<span style="position:absolute;left:-4px;top:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:999px;background:${debugBadge.color};border:2px solid #fff;color:#fff;font-size:9px;line-height:12px;text-align:center;font-weight:800;">${debugBadge.content}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderDeviceNodeMarker(node: DeviceMapPoint, debugRecord?: DebugRunRecord | null) {
+  const statusColor = SITE_STATUS_COLORS[node.status];
+  const primaryDevice = node.devices[0];
+  const nodeColor = node.type === 'sensor' ? '#16a34a' : '#7c3aed';
+  const debugBadge = getDebugBadge(debugRecord);
+
+  return `
+    <div title="${escapeHtml(debugBadge?.title ?? `${node.name} · ${DEVICE_MAP_POINT_LABELS[node.type]} · ${SITE_STATUS_LABELS[node.status]}`)}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;">
+      <div style="position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:#fff;color:${nodeColor};border:2px solid ${debugBadge?.color ?? statusColor};box-shadow:0 8px 20px rgba(15,23,42,.22);">
+        ${primaryDevice?.type === 'sensor' ? sensorGlyphSvg(primaryDevice.sensorType) : controllerGlyphSvg()}
+        <span style="position:absolute;right:-3px;top:-3px;width:12px;height:12px;border-radius:999px;background:${statusColor};border:2px solid #fff;"></span>
+        ${debugBadge ? `<span style="position:absolute;left:-4px;top:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:999px;background:${debugBadge.color};border:2px solid #fff;color:#fff;font-size:9px;line-height:12px;text-align:center;font-weight:800;">${debugBadge.content}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderDraftDeviceMarker(draft: ZoneDeviceDraft) {
+  if (draft.deviceType === 'controller') {
+    const stationLabel = compactStationLabel(draft.stationName);
+    const switchColor = draft.switchStatus === 'open'
+      ? '#2563eb'
+      : draft.switchStatus === 'closed'
+        ? '#64748b'
+        : '#94a3b8';
+    return `
+      <div style="position:relative;display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:999px;background:#fff;color:#0f172a;border:2px solid #22c55e;box-shadow:0 8px 18px rgba(15,23,42,.22);">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:rgba(34,197,94,.12);color:#166534;border:1px solid rgba(34,197,94,.28);font-size:12px;line-height:1;font-weight:800;">${escapeHtml(stationLabel)}</span>
+        <span style="position:absolute;left:-3px;bottom:-3px;width:15px;height:15px;border-radius:999px;background:${switchColor};border:2px solid #fff;color:#fff;font-size:9px;line-height:11px;text-align:center;font-weight:800;">?</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:#fff;color:#16a34a;border:2px solid #22c55e;box-shadow:0 8px 18px rgba(15,23,42,.22);">
+      ${sensorGlyphSvg(draft.sensorType)}
+    </div>
+  `;
 }
 
 export function FieldMap() {
@@ -333,6 +749,9 @@ export function FieldMap() {
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [panelMode, setPanelMode] = useState<DebugPanelMode>('overview');
+  const [debugRuns, setDebugRuns] = useState<Record<string, DebugRunRecord>>({});
+  const [debugBatchRunning, setDebugBatchRunning] = useState(false);
 
   const [newFieldName, setNewFieldName] = useState('');
   const [newFieldCode, setNewFieldCode] = useState('');
@@ -346,6 +765,7 @@ export function FieldMap() {
   const [newZoneName, setNewZoneName] = useState('');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [zoneDeviceDrafts, setZoneDeviceDrafts] = useState<ZoneDeviceDraft[]>([]);
+  const [controllerDraftPositions, setControllerDraftPositions] = useState<Record<string, GeoPoint>>({});
   const [zoneFormErrors, setZoneFormErrors] = useState<ZoneFormErrors>({});
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
 
@@ -356,6 +776,27 @@ export function FieldMap() {
   const initialFieldCenter = getInitialCenterFromFields(fields);
   const isEditingField = Boolean(editingFieldId);
   const isEditingZone = Boolean(editingZoneId);
+  const debugRunTokenRef = useRef(0);
+  const debugTargets = selectedField ? getFieldDebugTargets(selectedField, getFieldDevices(selectedField, devices)) : [];
+  const debugSummary = {
+    total: debugTargets.length,
+    controllers: debugTargets.filter((item) => item.type === 'controller').length,
+    stations: debugTargets.filter((item) => item.type === 'station').length,
+    sensors: debugTargets.filter((item) => item.type === 'sensor').length,
+  };
+
+  const getControllerDraftPosition = (device: Device, boundary: GeoPoint[]) => {
+    const draftPosition = controllerDraftPositions[device.id];
+    if (draftPosition) {
+      return draftPosition;
+    }
+
+    if (device.geoPosition && isPointInPolygon(device.geoPosition, boundary)) {
+      return device.geoPosition;
+    }
+
+    return getBoundaryCenter(boundary);
+  };
 
   const toggleZoneDeviceDraft = (device: Device, stationId: string, stationName: string) => {
     const key = `${device.id}:${stationId}`;
@@ -371,9 +812,64 @@ export function FieldMap() {
           key,
           deviceId: device.id,
           deviceName: device.name,
+          deviceType: device.type,
+          sensorType: device.sensorType,
           stationId,
           stationName,
+          switchStatus: device.type === 'controller' ? 'unknown' : 'none',
           position: getDraftPosition(drawPoints, prev.length),
+        },
+      ];
+    });
+    setZoneFormErrors((prev) => ({ ...prev, bindings: undefined }));
+  };
+
+  const handleSelectZoneDevice = (deviceId: string) => {
+    setSelectedDeviceId(deviceId || null);
+    if (!deviceId) {
+      return;
+    }
+
+    const device = bindableDevices.find((item) => item.id === deviceId);
+    if (!device) {
+      return;
+    }
+
+    if (device.type === 'controller') {
+      setControllerDraftPositions((prev) => (
+        prev[device.id]
+          ? prev
+          : { ...prev, [device.id]: getControllerDraftPosition(device, drawPoints) }
+      ));
+      setZoneFormErrors((prev) => ({ ...prev, bindings: undefined }));
+      return;
+    }
+
+    if (device.type !== 'sensor') {
+      return;
+    }
+
+    const station = getDeviceStations(device)[0] ?? { id: device.id, name: device.name };
+    const key = `${device.id}:${station.id}`;
+    setZoneDeviceDrafts((prev) => {
+      if (prev.some((item) => item.key === key)) {
+        return prev;
+      }
+
+      return [
+        ...prev,
+        {
+          key,
+          deviceId: device.id,
+          deviceName: device.name,
+          deviceType: device.type,
+          sensorType: device.sensorType,
+          stationId: station.id,
+          stationName: station.name,
+          switchStatus: 'none',
+          position: device.geoPosition && isPointInPolygon(device.geoPosition, drawPoints)
+            ? device.geoPosition
+            : getDraftPosition(drawPoints, prev.length),
         },
       ];
     });
@@ -398,8 +894,11 @@ export function FieldMap() {
           key,
           deviceId: device.id,
           deviceName: device.name,
+          deviceType: device.type,
+          sensorType: device.sensorType,
           stationId: binding.stationId,
           stationName: binding.stationName,
+          switchStatus: binding.switchStatus ?? (device.type === 'controller' ? 'unknown' : 'none'),
           position: binding.geoPosition ?? getDraftPosition(zoneBoundary, drafts.length + index),
         });
       });
@@ -425,14 +924,29 @@ export function FieldMap() {
         key,
         deviceId: device.id,
         deviceName: device.name,
+        deviceType: device.type,
+        sensorType: device.sensorType,
         stationId: station.id,
         stationName: station.name,
+        switchStatus: device.type === 'controller' ? 'unknown' : 'none',
         position: device.geoPosition ?? getDraftPosition(zoneBoundary, drafts.length),
       });
     });
 
     return drafts;
   };
+  useEffect(() => {
+    if (!selectedFieldId || mode !== 'browse') {
+      setPanelMode('overview');
+    }
+  }, [mode, selectedFieldId]);
+
+  useEffect(() => {
+    return () => {
+      debugRunTokenRef.current += 1;
+    };
+  }, []);
+
   useEffect(() => {
     if (!amapEnabled || !mapContainerRef.current) {
       setMapDebugPhase(amapEnabled ? 'container-missing' : 'amap-disabled');
@@ -542,6 +1056,8 @@ export function FieldMap() {
     }
 
     const allOverlays: any[] = [];
+    const visibleFieldIds = new Set(fields.map((field) => field.id));
+    const visibleZoneIds = new Set(fields.flatMap((field) => field.zones.map((zone) => zone.id)));
 
     fields.forEach((field) => {
       if (!field.geoBoundary || field.geoBoundary.length < 3) {
@@ -646,20 +1162,40 @@ export function FieldMap() {
       }
     });
 
-    devices
-      .flatMap((device) => getDeviceMapPoints(device).map((point) => ({ device, point })))
-      .filter(({ point }) => !shouldHideDevicePointDuringEdit(point, editingFieldId, editingZoneId))
-      .forEach(({ device, point }) => {
+    const mapNodes = [
+      ...getControllerStationMapPoints(devices),
+      ...getControllerMapPoints(devices),
+      ...getSensorMapPoints(devices),
+    ].filter((node) => {
+      if (!node.fieldId && !node.zoneId) {
+        return false;
+      }
+
+      if (node.type === 'controller') {
+        return (Boolean(node.fieldId) && visibleFieldIds.has(node.fieldId)) || (Boolean(node.zoneId) && visibleZoneIds.has(node.zoneId));
+      }
+
+      return (!node.fieldId || visibleFieldIds.has(node.fieldId)) && (!node.zoneId || visibleZoneIds.has(node.zoneId));
+    });
+
+    mapNodes
+      .filter((node) => !shouldHideDevicePointDuringEdit(node, editingFieldId, editingZoneId))
+      .forEach((node) => {
+        const debugRecord = panelMode === 'debug' ? debugRuns[node.key] : undefined;
         const marker = new AMap.Marker({
-          position: point.position,
-          anchor: 'bottom-center',
-          content: `
-            <div style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:9999px;background:#0f172a;color:#fff;border:2px solid #fff;box-shadow:0 6px 16px rgba(15,23,42,.22);font-size:12px;">
-              ${device.type === 'sensor' ? 'S' : device.type === 'valve' ? 'V' : 'D'}
-            </div>
-          `,
-          offset: new AMap.Pixel(-13, -13),
-          zIndex: 60,
+          position: node.position,
+          anchor: 'center',
+          content: node.type === 'controller_station'
+            ? renderControllerStationMarker(node, debugRecord)
+            : renderDeviceNodeMarker(node, debugRecord),
+          offset: new AMap.Pixel(0, 0),
+          zIndex: node.type === 'controller_station' ? 60 : 65,
+        });
+        marker.on('click', () => {
+          if (node.fieldId) {
+            setSelectedFieldId(node.fieldId);
+          }
+          setSelectedZoneId(node.zoneId ?? null);
         });
         marker.setMap(map);
         allOverlays.push(marker);
@@ -671,7 +1207,7 @@ export function FieldMap() {
       map.setFitView(allOverlays, false, [60, 60, 60, 60]);
       hasAutoFitMapRef.current = true;
     }
-  }, [devices, editingFieldId, editingZoneId, fields, isEditingField, isEditingZone, mapReady, selectedFieldId, selectedZoneId]);
+  }, [debugRuns, devices, editingFieldId, editingZoneId, fields, isEditingField, isEditingZone, mapReady, panelMode, selectedFieldId, selectedZoneId]);
 
   useEffect(() => {
     if (!mapRef.current || !mapReady) {
@@ -859,17 +1395,62 @@ export function FieldMap() {
     }
 
     if (mode === 'draw-zone' && drawStep === 'info') {
+      Object.entries(controllerDraftPositions).forEach(([deviceId, draftPosition]) => {
+        const controllerDevice = devices.find((device) => device.id === deviceId && device.type === 'controller');
+        if (!controllerDevice) {
+          return;
+        }
+
+        const marker = new AMap.Marker({
+          position: draftPosition,
+          anchor: 'center',
+          draggable: true,
+          cursor: 'move',
+          content: renderDeviceNodeMarker({
+            key: `selected-controller:${controllerDevice.id}`,
+            type: 'controller',
+            fieldId: controllerDevice.fieldId || undefined,
+            zoneId: controllerDevice.zoneId || undefined,
+            name: controllerDevice.name,
+            position: draftPosition,
+            devices: [controllerDevice],
+            status: getSiteStatus([controllerDevice]),
+            switchStatus: 'none',
+          }),
+          offset: new AMap.Pixel(0, 0),
+          zIndex: 96,
+        });
+
+        marker.on('dragend', (event: any) => {
+          const lng = event.lnglat?.getLng?.();
+          const lat = event.lnglat?.getLat?.();
+          if (typeof lng !== 'number' || typeof lat !== 'number') {
+            return;
+          }
+
+          const nextPoint: GeoPoint = [Number(lng.toFixed(6)), Number(lat.toFixed(6))];
+          if (!isPointInPolygon(nextPoint, drawPoints)) {
+            marker.setPosition(draftPosition);
+            return;
+          }
+
+          setControllerDraftPositions((prev) => ({
+            ...prev,
+            [controllerDevice.id]: nextPoint,
+          }));
+        });
+
+        marker.setMap(map);
+        nextTempOverlays.push(marker);
+      });
+
       zoneDeviceDrafts.forEach((draft) => {
         const marker = new AMap.Marker({
           position: draft.position,
           anchor: 'center',
           draggable: true,
           cursor: 'move',
-          content: `
-            <div style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9999px;background:#16a34a;color:#fff;border:2px solid #fff;box-shadow:0 8px 18px rgba(22,163,74,.28);font-size:12px;font-weight:700;">
-                ${draft.deviceName.slice(0, 1)}
-            </div>
-          `,
+          content: renderDraftDeviceMarker(draft),
           offset: new AMap.Pixel(0, 0),
           zIndex: 95,
         });
@@ -900,7 +1481,7 @@ export function FieldMap() {
     }
 
     tempOverlaysRef.current = nextTempOverlays;
-  }, [drawPoints, drawStep, isDrawing, mapReady, mode, mousePoint, zoneDeviceDrafts]);
+  }, [controllerDraftPositions, devices, drawPoints, drawStep, isDrawing, mapReady, mode, mousePoint, selectedDeviceId, zoneDeviceDrafts]);
 
   const resetDrawState = () => {
     setMode('browse');
@@ -918,6 +1499,7 @@ export function FieldMap() {
     setNewZoneName('');
     setSelectedDeviceId(null);
     setZoneDeviceDrafts([]);
+    setControllerDraftPositions({});
     setZoneFormErrors({});
     setEditingZoneId(null);
   };
@@ -932,6 +1514,7 @@ export function FieldMap() {
     setNewZoneName('');
     setSelectedDeviceId(null);
     setZoneDeviceDrafts([]);
+    setControllerDraftPositions({});
     setZoneFormErrors({});
   };
 
@@ -964,6 +1547,7 @@ export function FieldMap() {
     setDrawPoints([]);
     setMousePoint(null);
     setEditingZoneId(null);
+    setControllerDraftPositions({});
   };
 
   const startEditField = (field: Field) => {
@@ -1010,6 +1594,13 @@ export function FieldMap() {
     setNewZoneName(zone.name);
     setSelectedDeviceId(null);
     setZoneDeviceDrafts(buildZoneDraftsForEdit(field, zone.id));
+    setControllerDraftPositions(
+      Object.fromEntries(
+        devices
+          .filter((device) => device.type === 'controller' && device.zoneId === zone.id && device.geoPosition)
+          .map((device) => [device.id, device.geoPosition as GeoPoint]),
+      ),
+    );
     setZoneFormErrors({});
     setDrawPoints(boundary);
     setDrawStep(boundary.length >= 3 ? 'info' : 'drawing');
@@ -1023,6 +1614,7 @@ export function FieldMap() {
     if (isEditingZone) {
       setSelectedDeviceId(null);
       setZoneDeviceDrafts([]);
+      setControllerDraftPositions({});
       setZoneFormErrors({});
     }
   };
@@ -1181,7 +1773,17 @@ export function FieldMap() {
     }
 
     const selectedDeviceIds = [...new Set(zoneDeviceDrafts.map((item) => item.deviceId))];
+    const controllerPositions = selectedDeviceIds
+      .map((deviceId) => devices.find((device) => device.id === deviceId && device.type === 'controller'))
+      .filter((device): device is Device => Boolean(device))
+      .map((device) => ({
+        deviceId: device.id,
+        position: getControllerDraftPosition(device, drawPoints),
+      }));
     const primaryStation = selectedStationValues[0];
+    const zoneSiteNumber = editingZoneId
+      ? (selectedField.zones.find((zone) => zone.id === editingZoneId)?.siteNumber ?? getNextSiteNumber(selectedField, editingZoneId))
+      : getNextSiteNumber(selectedField);
     let createdZoneId: string | null = editingZoneId;
 
     setSaving(true);
@@ -1191,7 +1793,7 @@ export function FieldMap() {
           await updateZoneInSupabase({
             zoneId: editingZoneId,
             name: newZoneName.trim(),
-            siteNumber: parseSiteNumber(primaryStation, selectedField),
+            siteNumber: zoneSiteNumber,
             boundary: drawPoints,
           });
           createdZoneId = editingZoneId;
@@ -1199,7 +1801,7 @@ export function FieldMap() {
           const created = await createZoneInSupabase({
             fieldId: selectedField.id,
             name: newZoneName.trim(),
-            siteNumber: parseSiteNumber(primaryStation, selectedField),
+            siteNumber: zoneSiteNumber,
             boundary: drawPoints,
           });
           createdZoneId = created.id;
@@ -1212,8 +1814,10 @@ export function FieldMap() {
             deviceId: draft.deviceId,
             stationId: draft.stationId,
             stationName: draft.stationName,
+            switchStatus: draft.switchStatus,
             position: draft.position,
           })),
+          controllerPositions,
         });
         await Promise.all([refreshFields(), refreshDevices()]);
       }
@@ -1231,7 +1835,8 @@ export function FieldMap() {
                         ? {
                             ...zone,
                             name: newZoneName.trim(),
-                            stationNo: zoneDeviceDrafts.map((item) => item.stationName).join(' / '),
+                            siteNumber: zoneSiteNumber,
+                            stationNo: zoneDeviceDrafts.map((item) => getStationDisplayValue(item.stationName)).join(' / '),
                             geoBoundary: drawPoints,
                             geoCenter: drawPoints[0],
                             deviceIds: selectedDeviceIds,
@@ -1244,7 +1849,8 @@ export function FieldMap() {
                         id: newZoneId,
                         fieldId: selectedField.id,
                         name: newZoneName.trim(),
-                        stationNo: zoneDeviceDrafts.map((item) => item.stationName).join(' / '),
+                        siteNumber: zoneSiteNumber,
+                        stationNo: zoneDeviceDrafts.map((item) => getStationDisplayValue(item.stationName)).join(' / '),
                         status: 'idle',
                         duration: 45,
                         soilMoisture: 60,
@@ -1273,6 +1879,7 @@ export function FieldMap() {
               zoneId: createdZoneId ?? device.zoneId,
               stationId: item.stationId,
               stationName: item.stationName,
+              switchStatus: item.switchStatus,
               geoPosition: item.position,
             }));
 
@@ -1280,8 +1887,10 @@ export function FieldMap() {
             ...device,
             fieldId: selectedField.id,
             zoneId: createdZoneId ?? device.zoneId,
-            stationNo: bindings[0]?.stationName ?? device.stationNo,
-            geoPosition: bindings[0]?.geoPosition ?? device.geoPosition,
+            stationNo: bindings[0]?.stationName ? getStationDisplayValue(bindings[0].stationName) : device.stationNo,
+            geoPosition: device.type === 'controller'
+              ? controllerPositions.find((item) => item.deviceId === device.id)?.position ?? bindings[0]?.geoPosition ?? device.geoPosition
+              : bindings[0]?.geoPosition ?? device.geoPosition,
             bindings,
           };
         }));
@@ -1319,19 +1928,74 @@ export function FieldMap() {
     }
   };
 
-  const fieldDevices = (field: Field) => {
-    const zoneIds = field.zones.map((zone) => zone.id);
-    return devices.filter((device) =>
-      device.fieldId === field.id ||
-      zoneIds.includes(device.zoneId) ||
-      (device.bindings?.some((binding) => binding.fieldId === field.id || zoneIds.includes(binding.zoneId)) ?? false),
-    );
-  };
-
   const selectedDevice = selectedDeviceId
     ? bindableDevices.find((device) => device.id === selectedDeviceId) ?? null
     : null;
   const selectedDeviceStations = selectedDevice ? getDeviceStations(selectedDevice) : [];
+
+  const stopDebugRun = () => {
+    debugRunTokenRef.current += 1;
+    setDebugBatchRunning(false);
+  };
+
+  const runDebugTarget = async (target: DebugTarget, token: number) => {
+    setDebugRuns((prev) => ({
+      ...prev,
+      [target.key]: {
+        status: 'checking',
+        message: '正在触发测试并等待设备响应。',
+      },
+    }));
+
+    await new Promise((resolve) => window.setTimeout(resolve, 650));
+    if (debugRunTokenRef.current !== token) {
+      return;
+    }
+
+    const outcome = getDebugOutcome(target);
+    setDebugRuns((prev) => ({
+      ...prev,
+      [target.key]: {
+        status: outcome.status,
+        message: outcome.message,
+        checkedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      },
+    }));
+  };
+
+  const handleRunSingleDebug = async (target: DebugTarget) => {
+    const token = Date.now();
+    debugRunTokenRef.current = token;
+    setDebugBatchRunning(false);
+    await runDebugTarget(target, token);
+  };
+
+  const handleRunFieldDebug = async () => {
+    if (!selectedField || debugTargets.length === 0) {
+      return;
+    }
+
+    const token = Date.now();
+    debugRunTokenRef.current = token;
+    setDebugBatchRunning(true);
+
+    for (const target of debugTargets) {
+      if (debugRunTokenRef.current !== token) {
+        break;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await runDebugTarget(target, token);
+    }
+
+    if (debugRunTokenRef.current === token) {
+      setDebugBatchRunning(false);
+    }
+  };
+
+  const handleResetDebug = () => {
+    stopDebugRun();
+    setDebugRuns({});
+  };
 
   const setupHint = !isSupabaseConfigured
     ? '当前还是 mock 模式，地图可先显示，但地块读写还不会走服务端。'
@@ -1562,6 +2226,125 @@ export function FieldMap() {
             </div>
           ) : null}
 
+          {!isDrawing ? (
+            <div
+              className="absolute left-4 top-4 z-10 rounded-xl px-3 py-3"
+              style={{
+                width: 236,
+                background: 'rgba(255,255,255,0.94)',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 10px 22px rgba(15,23,42,0.12)',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <div style={{ color: '#0f172a', fontSize: 12, fontWeight: 700, marginBottom: 8 }}>图例</div>
+              <div className="flex flex-col gap-2">
+                <div>
+                  <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>地块状态</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      ['normal', '正常'],
+                      ['warning', '预警'],
+                      ['alarm', '告警'],
+                    ].map(([status, label]) => (
+                      <div key={status} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                        <span
+                          className="inline-flex items-center justify-center rounded-full"
+                          style={{
+                            width: 14,
+                            height: 14,
+                            background: '#ffffff',
+                            border: `2px solid ${STATUS_COLORS[status as keyof typeof STATUS_COLORS]}`,
+                          }}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                  <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>分区灌溉</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      ['idle', '待机'],
+                      ['pending', '等待'],
+                      ['running', '浇灌中'],
+                      ['alarm', '告警'],
+                    ].map(([status, label]) => (
+                      <div key={status} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                        <span
+                          className="inline-block rounded-sm"
+                          style={{
+                            width: 14,
+                            height: 9,
+                            background: ZONE_STATUS_COLORS[status as keyof typeof ZONE_STATUS_COLORS],
+                            opacity: ZONE_FILL_OPACITY[status as keyof typeof ZONE_FILL_OPACITY],
+                            border: `2px solid ${ZONE_STATUS_COLORS[status as keyof typeof ZONE_STATUS_COLORS]}`,
+                          }}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                  <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>设备状态</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      ['online', '在线'],
+                      ['offline', '离线'],
+                      ['partial', '部分离线'],
+                      ['alarm', '告警'],
+                    ].map(([status, label]) => (
+                      <div key={status} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                        <span
+                          className="inline-flex items-center justify-center rounded-full"
+                          style={{
+                            width: 14,
+                            height: 14,
+                            background: '#ffffff',
+                            border: `2px solid ${SITE_STATUS_COLORS[status as SiteStatus]}`,
+                          }}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                  <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>开关状态</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      ['open', '开启', '#2563eb'],
+                      ['closed', '关闭', '#64748b'],
+                      ['unknown', '未知', '#94a3b8'],
+                    ].map(([key, label, color]) => (
+                      <div key={key} className="flex items-center gap-1.5" style={{ color: '#475569', fontSize: 11 }}>
+                        <span
+                          className="inline-flex items-center justify-center rounded-full"
+                          style={{
+                            width: 16,
+                            height: 16,
+                            background: color,
+                            color: '#ffffff',
+                            fontSize: 10,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {key === 'open' ? '开' : key === 'closed' ? '关' : '?'}
+                        </span>
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {isDrawing && drawStep === 'info' ? (
             <div
               className="absolute right-4 top-4 rounded-2xl shadow-xl p-5"
@@ -1672,10 +2455,12 @@ export function FieldMap() {
                         <div style={{ color: '#94a3b8', fontSize: 12 }}>暂无可绑定设备</div>
                       ) : (
                         <>
-                          <div style={{ color: '#64748b', fontSize: 12, marginBottom: 8 }}>先选择设备，再选择该设备下的站点。选中站点后会在区域内生成可拖动图标。</div>
+                          <div style={{ color: '#64748b', fontSize: 12, marginBottom: 8 }}>
+                            选择控制器会先显示控制器位置，再选择通道生成站点；选择传感器会直接生成传感器点。
+                          </div>
                           <select
                             value={selectedDeviceId ?? ''}
-                            onChange={(event) => setSelectedDeviceId(event.target.value || null)}
+                            onChange={(event) => handleSelectZoneDevice(event.target.value)}
                             className="w-full px-3 py-2 rounded-lg outline-none"
                             style={{ border: '1px solid #e2e8f0', fontSize: 13, background: '#ffffff', color: '#0f172a' }}
                           >
@@ -1689,10 +2474,10 @@ export function FieldMap() {
                               );
                             })}
                           </select>
-                          {selectedDeviceId ? (
+                          {selectedDeviceId && selectedDevice?.type === 'controller' ? (
                             <div className="mt-3 pt-3" style={{ borderTop: '1px solid #e2e8f0' }}>
                               <div style={{ color: '#0f172a', fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-                                选择站点
+                                选择控制器通道
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 {selectedDeviceStations.map((station) => {
@@ -1711,11 +2496,15 @@ export function FieldMap() {
                                         fontSize: 12,
                                       }}
                                     >
-                                      {station.name}
+                                      {getStationDisplayValue(station.name)}
                                     </button>
                                   );
                                 })}
                               </div>
+                            </div>
+                          ) : selectedDevice?.type === 'sensor' ? (
+                            <div className="mt-3 rounded-lg px-3 py-2" style={{ background: '#f0fdf4', color: '#15803d', fontSize: 12 }}>
+                              已添加传感器点，可在地图中拖动调整位置。
                             </div>
                           ) : null}
                           {zoneDeviceDrafts.length > 0 ? (
@@ -1730,7 +2519,7 @@ export function FieldMap() {
                                   >
                                     <div>
                                       <div style={{ color: '#0f172a', fontSize: 12, fontWeight: 600 }}>{item.deviceName}</div>
-                                      <div style={{ color: '#94a3b8', fontSize: 11 }}>{item.stationName} · 地图中可拖动调整位置，且不能移出分区</div>
+                                      <div style={{ color: '#94a3b8', fontSize: 11 }}>{getStationDisplayValue(item.stationName)} · 地图中可拖动调整位置，且不能移出分区</div>
                                     </div>
                                     <button
                                       type="button"
@@ -1796,9 +2585,165 @@ export function FieldMap() {
               </span>
               <span style={{ color: '#94a3b8', fontSize: 12 }}>{selectedField.code}</span>
             </div>
+            <div className="mt-3 flex items-center gap-1 p-1 rounded-xl" style={{ background: '#f1f5f9' }}>
+              {[
+                { key: 'overview' as DebugPanelMode, label: '概览' },
+                { key: 'debug' as DebugPanelMode, label: '调试模式' },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setPanelMode(item.key)}
+                  className="flex-1 py-1.5 rounded-lg"
+                  style={{
+                    background: panelMode === item.key ? '#0f172a' : 'transparent',
+                    color: panelMode === item.key ? '#ffffff' : '#64748b',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+            {panelMode === 'debug' ? (
+              <>
+                <div className="rounded-2xl p-3" style={{ background: '#0f172a', color: '#ffffff' }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Bug size={16} />
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>地块调试模式</span>
+                    </div>
+                    <span style={{ color: '#cbd5e1', fontSize: 11 }}>
+                      {debugBatchRunning ? '巡检执行中' : '安装 / 运维排查'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    {[
+                      ['控制器', debugSummary.controllers],
+                      ['站点', debugSummary.stations],
+                      ['传感器', debugSummary.sensors],
+                    ].map(([label, value]) => (
+                      <div key={String(label)} className="rounded-xl px-2 py-2" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                        <div style={{ color: '#94a3b8', fontSize: 10 }}>{label}</div>
+                        <div style={{ fontSize: 16, fontWeight: 700 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRunFieldDebug}
+                      disabled={debugSummary.total === 0 || debugBatchRunning}
+                      className="flex-1 py-2 rounded-xl flex items-center justify-center gap-2"
+                      style={{ background: debugSummary.total === 0 || debugBatchRunning ? '#475569' : '#16a34a', color: '#ffffff', fontSize: 12 }}
+                    >
+                      <Play size={14} /> 整块巡检
+                    </button>
+                    <button
+                      type="button"
+                      onClick={debugBatchRunning ? stopDebugRun : handleResetDebug}
+                      className="flex-1 py-2 rounded-xl flex items-center justify-center gap-2"
+                      style={{ background: '#1e293b', color: '#e2e8f0', fontSize: 12, border: '1px solid rgba(255,255,255,.12)' }}
+                    >
+                      {debugBatchRunning ? <Square size={14} /> : <RotateCcw size={14} />}
+                      {debugBatchRunning ? '停止巡检' : '清空结果'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['正常', Object.values(debugRuns).filter((item) => item.status === 'ok').length, '#16a34a'],
+                    ['待排查', Object.values(debugRuns).filter((item) => item.status === 'warning').length, '#f59e0b'],
+                    ['异常', Object.values(debugRuns).filter((item) => item.status === 'error').length, '#ef4444'],
+                    ['未测', Math.max(debugSummary.total - Object.keys(debugRuns).length, 0), '#94a3b8'],
+                  ].map(([label, value, color]) => (
+                    <div key={String(label)} className="rounded-xl p-3" style={{ background: '#f8fafc' }}>
+                      <div style={{ color: '#94a3b8', fontSize: 11 }}>{label}</div>
+                      <div style={{ color: String(color), fontSize: 15, fontWeight: 700 }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl p-3" style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Activity size={14} color="#1d4ed8" />
+                    <span style={{ color: '#0f172a', fontSize: 13, fontWeight: 700 }}>调试项</span>
+                  </div>
+                  {debugTargets.length === 0 ? (
+                    <div style={{ color: '#94a3b8', fontSize: 12 }}>当前地块还没有设备和站点可调试。</div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {debugTargets.map((target) => {
+                        const record = debugRuns[target.key];
+                        const targetStatus = record?.status ?? 'idle';
+                        return (
+                          <div key={target.key} className="rounded-xl p-3" style={{ background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                            <div className="flex items-start gap-2">
+                              <div
+                                className="shrink-0 rounded-full"
+                                style={{ width: 10, height: 10, marginTop: 4, background: DEBUG_STATUS_COLORS[targetStatus] }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <div style={{ color: '#0f172a', fontSize: 13, fontWeight: 600 }} className="truncate">{target.label}</div>
+                                  <span
+                                    className="px-2 py-0.5 rounded-full"
+                                    style={{ background: `${DEBUG_STATUS_COLORS[targetStatus]}18`, color: DEBUG_STATUS_COLORS[targetStatus], fontSize: 11, fontWeight: 600 }}
+                                  >
+                                    {DEBUG_STATUS_LABELS[targetStatus]}
+                                  </span>
+                                </div>
+                                <div style={{ color: '#64748b', fontSize: 11, marginBottom: 6 }}>
+                                  {target.type === 'controller' ? '控制器' : target.type === 'station' ? '站点' : '传感器'} · {target.subtitle}
+                                </div>
+                                <div style={{ color: '#334155', fontSize: 12 }}>
+                                  {record?.message ?? `当前设备${SITE_STATUS_LABELS[target.status]}${target.type === 'station' ? `，开关${SITE_SWITCH_LABELS[target.switchStatus]}` : ''}`}
+                                </div>
+                                {record?.checkedAt ? (
+                                  <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 4 }}>最近检测 {record.checkedAt}</div>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (target.zoneId) {
+                                    setSelectedZoneId(target.zoneId);
+                                  }
+                                  if (target.fieldId) {
+                                    setSelectedFieldId(target.fieldId);
+                                  }
+                                }}
+                                className="flex-1 py-2 rounded-lg"
+                                style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 12 }}
+                              >
+                                定位
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleRunSingleDebug(target)}
+                                disabled={debugBatchRunning}
+                                className="flex-1 py-2 rounded-lg"
+                                style={{ background: debugBatchRunning ? '#e2e8f0' : '#0f172a', color: debugBatchRunning ? '#94a3b8' : '#ffffff', fontSize: 12 }}
+                              >
+                                单点测试
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
             <div className="grid grid-cols-2 gap-2">
               {[
                 ['作物', selectedField.crop],
@@ -1842,7 +2787,7 @@ export function FieldMap() {
                           className="px-1.5 py-0.5 rounded-full text-xs"
                           style={{ background: `${ZONE_STATUS_COLORS[zone.status]}20`, color: ZONE_STATUS_COLORS[zone.status] }}
                         >
-                          {zone.status === 'idle' ? '待机' : zone.status === 'running' ? '浇灌中' : '高风险'}
+                          {ZONE_STATUS_LABELS[zone.status]}
                         </span>
                       </div>
                       <div style={{ color: '#94a3b8', fontSize: 11 }}>
@@ -1880,12 +2825,12 @@ export function FieldMap() {
                 <span style={{ color: '#0f172a', fontSize: 13, fontWeight: 600 }}>设备点位</span>
               </div>
               <div className="flex flex-col gap-1.5">
-                {fieldDevices(selectedField).length === 0 ? (
+                {getFieldDevices(selectedField, devices).length === 0 ? (
                   <div className="p-3 rounded-xl" style={{ background: '#f8fafc', color: '#94a3b8', fontSize: 12 }}>
                     设备接口下一步接入，当前先完成地块与分区。
                   </div>
                 ) : (
-                  fieldDevices(selectedField).slice(0, 4).map((device) => (
+                  getFieldDevices(selectedField, devices).slice(0, 4).map((device) => (
                     <div key={device.id} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: '#f8fafc' }}>
                       <div
                         className="rounded-full shrink-0"
@@ -1899,9 +2844,9 @@ export function FieldMap() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 mt-auto">
-              <button
-                onClick={() => navigate(`/field/${selectedField.id}`)}
+              <div className="flex flex-col gap-2 mt-auto">
+                <button
+                  onClick={() => navigate(`/field/${selectedField.id}`)}
                 className="flex items-center justify-center gap-2 py-2.5 rounded-xl w-full"
                 style={{ background: '#16a34a', color: '#ffffff', fontSize: 14 }}
               >
@@ -1931,6 +2876,8 @@ export function FieldMap() {
                 </button>
               </div>
             </div>
+            </>
+            )}
           </div>
         </div>
       ) : null}

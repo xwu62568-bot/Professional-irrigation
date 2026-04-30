@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import type { Session } from '@supabase/supabase-js';
 import {
   Field, Zone, Device, Plan, Strategy,
-  mockFields, mockDevices, mockPlans, mockStrategies
+  mockDevices, mockPlans, mockStrategies
 } from '../data/mockData';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { fetchFieldsFromSupabase } from '../../lib/fieldService';
@@ -96,7 +96,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
-  const [fields, setFields] = useState<Field[]>(mockFields);
+  const [fields, setFields] = useState<Field[]>([]);
   const [isFieldsLoading, setIsFieldsLoading] = useState(false);
   const [devices, setDevices] = useState<Device[]>(mockDevices);
   const [plans, setPlans] = useState<Plan[]>(mockPlans);
@@ -139,7 +139,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshFields = async () => {
     if (!supabase) {
-      setFields(mockFields);
+      setFields([]);
       return;
     }
 
@@ -161,16 +161,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     if (!user) {
-      setDevices([]);
+      setDevices(withWifiDemoDevice(mockDevices));
       return;
     }
 
     try {
       await seedDevicesInSupabase(user.id);
       const nextDevices = await fetchDevicesFromSupabase();
-      setDevices(withWifiDemoDevice(nextDevices));
+      setDevices(withWifiDemoDevice(nextDevices.length > 0 ? nextDevices : mockDevices));
     } catch (error) {
       console.error('Failed to load devices from Supabase:', error);
+      setDevices(withWifiDemoDevice(mockDevices));
     }
   };
 
@@ -195,7 +196,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!supabase) {
-      setFields(mockFields);
+      setFields([]);
       setDevices(withWifiDemoDevice(mockDevices));
       setPlans(mockPlans);
       setIsFieldsLoading(false);
@@ -204,7 +205,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     if (!isAuthenticated) {
       setFields([]);
-      setDevices([]);
+      setDevices(withWifiDemoDevice(mockDevices));
       setPlans([]);
       setIsFieldsLoading(false);
       return;

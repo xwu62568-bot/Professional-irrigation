@@ -69,7 +69,7 @@ export async function fetchDevices(config, deviceIds) {
   const joined = deviceIds.map((id) => `"${id}"`).join(',');
   return request(
     config,
-    `irrigation_devices?id=in.(${encodeURIComponent(joined)})&select=id,client_key,name`,
+    `irrigation_devices?id=in.(${encodeURIComponent(joined)})&select=id,client_key,name,type`,
     { method: 'GET' },
   );
 }
