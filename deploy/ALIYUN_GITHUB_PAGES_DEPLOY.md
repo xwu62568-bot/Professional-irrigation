@@ -257,5 +257,6 @@ docker compose \
   -f /opt/irrigation2.0/deploy/docker-compose.aliyun.yml \
   down
 ```
-root
-v6&&Rb/4*3@eqsn
+用 expect 走密码登录
+账号:root
+密码:v6&&Rb/4*3@eqsn

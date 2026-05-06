@@ -144,6 +144,9 @@ export function createRunService(config, logger = console) {
     activeRuns.add(runId);
 
     try {
+      let executedStepCount = 0;
+      let skippedStepCount = 0;
+
       await updatePlanRun(config, runId, {
         status: 'running',
         started_at: nowIso(),
@@ -165,16 +168,18 @@ export function createRunService(config, logger = console) {
             status: 'failed',
             started_at: nowIso(),
             finished_at: nowIso(),
-            error_message: '该分区未绑定设备站点',
+            error_message: '该分区未绑定可执行控制器站点',
           });
-          await updatePlanRun(config, runId, {
-            status: 'failed',
-            finished_at: nowIso(),
-            current_zone_id: step.zone_id,
-            error_message: '存在未绑定设备的分区',
+          skippedStepCount += 1;
+          logger.log('[execution-service] skip run step without executable controller binding', {
+            runId,
+            stepId: step.id,
+            zoneId: step.zone_id,
           });
-          return;
+          continue;
         }
+
+        executedStepCount += 1;
 
         await updatePlanRun(config, runId, {
           current_zone_id: step.zone_id,
@@ -242,10 +247,25 @@ export function createRunService(config, logger = console) {
         });
       }
 
+      if (executedStepCount === 0) {
+        await updatePlanRun(config, runId, {
+          status: 'failed',
+          finished_at: nowIso(),
+          current_zone_id: null,
+          error_message: skippedStepCount > 0
+            ? '计划内分区未绑定可执行控制器站点'
+            : '计划内没有可执行分区',
+        });
+        return;
+      }
+
       await updatePlanRun(config, runId, {
         status: 'success',
         finished_at: nowIso(),
         current_zone_id: null,
+        error_message: skippedStepCount > 0
+          ? `${skippedStepCount} 个分区未绑定可执行控制器站点，已跳过`
+          : null,
       });
     } catch (error) {
       logger.error('[execution-service] executeRun failed', error);
@@ -311,6 +331,15 @@ export function createRunService(config, logger = console) {
         return;
       }
       const list = bindingsByZoneId.get(binding.zone_id) ?? [];
+      if (list.length > 0) {
+        logger.log('[execution-service] skip extra controller binding for zone', {
+          zoneId: binding.zone_id,
+          deviceId: binding.device_id,
+          stationId: binding.station_id,
+          keptStationId: list[0]?.station_id ?? null,
+        });
+        return;
+      }
       list.push(binding);
       bindingsByZoneId.set(binding.zone_id, list);
     });
