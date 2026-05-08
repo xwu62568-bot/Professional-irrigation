@@ -34,6 +34,39 @@ export async function fetchPlan(config, planId) {
   return rows?.[0] ?? null;
 }
 
+export async function createIrrigationPlan(config, payload) {
+  const rows = await request(config, 'irrigation_plans', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload),
+  });
+  return rows?.[0] ?? null;
+}
+
+export async function updateIrrigationPlan(config, planId, payload) {
+  const rows = await request(config, `irrigation_plans?id=eq.${encodeURIComponent(planId)}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload),
+  });
+  return rows?.[0] ?? null;
+}
+
+export async function deletePlanZonesForPlan(config, planId) {
+  await request(config, `irrigation_plan_zones?plan_id=eq.${encodeURIComponent(planId)}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+  });
+}
+
+export async function insertPlanZones(config, payload) {
+  return request(config, 'irrigation_plan_zones', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchSchedulablePlans(config) {
   return request(
     config,

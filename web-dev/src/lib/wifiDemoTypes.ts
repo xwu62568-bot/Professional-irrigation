@@ -27,12 +27,6 @@ export interface WifiDemoDeviceState {
   errorMessage: string;
 }
 
-export interface WifiDemoProxyState {
-  proxyStatus: 'idle' | 'connecting' | 'connected' | 'error';
-  mqttConnected: boolean;
-  state: WifiDemoDeviceState;
-}
-
 export interface WifiDemoControlCommand {
   stationIndex: number;
   type: 'on' | 'off';

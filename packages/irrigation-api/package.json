@@ -1,0 +1,12 @@
+{
+  "name": "@irrigation/api",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "dependencies": {
+    "@irrigation/domain": "file:../irrigation-domain"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Activity, ArrowLeft, ArrowUpDown, CircleDot, Power, RefreshCcw, Signal, Wifi, WifiOff } from 'lucide-react';
-import { wifiDemoMqttClient } from '../../lib/wifiDemoMqtt';
+import { wifiDemoGatewayClient } from '../../lib/wifiDemoGateway';
 import { getWifiDemoMissingConfig, getWifiDemoTopics, wifiDemoDevice } from '../../lib/wifiDemoConfig';
 import type { WifiDemoDeviceState } from '../../lib/wifiDemoTypes';
 
@@ -70,11 +70,11 @@ export function WifiDeviceDemo() {
   const [durationByStation, setDurationByStation] = useState<Record<number, string>>({});
 
   useEffect(() => {
-    const unsubscribe = wifiDemoMqttClient.subscribe(setState);
-    wifiDemoMqttClient.start();
+    const unsubscribe = wifiDemoGatewayClient.subscribe(setState);
+    wifiDemoGatewayClient.start();
     return () => {
       unsubscribe();
-      wifiDemoMqttClient.stop();
+      wifiDemoGatewayClient.stop();
     };
   }, []);
 
@@ -102,7 +102,7 @@ export function WifiDeviceDemo() {
             </p>
           </div>
           <button
-            onClick={() => wifiDemoMqttClient.requestDeviceInfo()}
+            onClick={() => wifiDemoGatewayClient.requestDeviceInfo()}
             className="inline-flex items-center gap-2 rounded-xl px-4 py-2"
             style={{ background: '#0f172a', color: '#ffffff' }}
           >
@@ -236,7 +236,7 @@ export function WifiDeviceDemo() {
                         />
                         <button
                           onClick={() =>
-                            wifiDemoMqttClient.sendValveCommand({
+                            wifiDemoGatewayClient.sendValveCommand({
                               stationIndex: station.index,
                               type: 'on',
                               durationSeconds: Math.max(1, Number(durationValue || 0)),
@@ -250,7 +250,7 @@ export function WifiDeviceDemo() {
                         </button>
                         <button
                           onClick={() =>
-                            wifiDemoMqttClient.sendValveCommand({
+                            wifiDemoGatewayClient.sendValveCommand({
                               stationIndex: station.index,
                               type: 'off',
                               durationSeconds: Math.max(1, Number(durationValue || 0)),

@@ -6,6 +6,9 @@ web/node_modules/
 web/dist/
 web-dev/node_modules/
 web-dev/dist/
+mini-program/node_modules/
+mini-program/dist/
+mini-program/.swc/
 web-dev/.env
 services/.env
 services/.env.production

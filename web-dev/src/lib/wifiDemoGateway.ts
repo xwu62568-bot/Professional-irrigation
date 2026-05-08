@@ -24,7 +24,7 @@ async function readJson(response: Response) {
   return response.json().catch(() => ({}));
 }
 
-export class WifiDemoMqttClient {
+export class WifiDemoGatewayClient {
   private listeners = new Set<StateListener>();
   private state: WifiDemoDeviceState = { ...baseState };
   private started = false;
@@ -180,4 +180,4 @@ export class WifiDemoMqttClient {
   }
 }
 
-export const wifiDemoMqttClient = new WifiDemoMqttClient();
+export const wifiDemoGatewayClient = new WifiDemoGatewayClient();

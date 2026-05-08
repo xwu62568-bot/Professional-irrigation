@@ -1,0 +1,41 @@
+{
+  "name": "irrigation-mini-program",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "npm run dev:local",
+    "start": "npm run dev:local",
+    "dev:local": "MINI_PROGRAM_PROFILE=local taro build --type weapp --watch",
+    "dev:test": "MINI_PROGRAM_PROFILE=test taro build --type weapp --watch",
+    "dev:weapp": "npm run dev:local",
+    "build": "npm run build:local",
+    "build1": "npm run build:test",
+    "build:local": "MINI_PROGRAM_PROFILE=local taro build --type weapp",
+    "build:test": "MINI_PROGRAM_PROFILE=test taro build --type weapp",
+    "build:weapp": "npm run build:local",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@tarojs/components": "4.2.0",
+    "@tarojs/helper": "4.2.0",
+    "@tarojs/react": "4.2.0",
+    "@tarojs/runtime": "4.2.0",
+    "@tarojs/shared": "4.2.0",
+    "@tarojs/taro": "4.2.0",
+    "lucide-static": "^1.14.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@babel/preset-react": "7.26.3",
+    "@tarojs/cli": "4.2.0",
+    "@tarojs/plugin-framework-react": "4.2.0",
+    "@tarojs/plugin-platform-weapp": "4.2.0",
+    "@tarojs/webpack5-runner": "4.2.0",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "babel-preset-taro": "4.2.0",
+    "typescript": "5.6.3",
+    "webpack": "5.91.0"
+  }
+}

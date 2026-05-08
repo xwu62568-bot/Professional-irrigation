@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "src/*"
+      ],
+      "@irrigation/domain": [
+        "../packages/irrigation-domain/src"
+      ],
+      "@irrigation/api": [
+        "../packages/irrigation-api/src"
+      ]
+    },
+    "types": [
+      "@tarojs/taro",
+      "webpack-env"
+    ]
+  },
+  "include": [
+    "src",
+    "config"
+  ]
+}

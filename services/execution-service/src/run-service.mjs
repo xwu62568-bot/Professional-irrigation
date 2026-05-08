@@ -444,6 +444,16 @@ export function createRunService(config, logger = console) {
     });
   }
 
+  async function stopPlan(planId) {
+    const activeRuns = await fetchActiveRunsForPlan(config, planId);
+    if (!activeRuns || activeRuns.length === 0) {
+      throw new Error('当前没有可停止的执行任务');
+    }
+
+    await Promise.all(activeRuns.map((run) => stopRun(run.id)));
+    return activeRuns;
+  }
+
   async function getRunDetail(runId) {
     const run = await fetchRun(config, runId);
     if (!run) {
@@ -456,6 +466,7 @@ export function createRunService(config, logger = console) {
   return {
     startManualRun,
     stopRun,
+    stopPlan,
     getRunDetail,
     startScheduler,
     stopScheduler,

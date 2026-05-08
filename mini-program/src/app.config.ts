@@ -1,0 +1,35 @@
+export default defineAppConfig({
+  pages: [
+    'pages/login/index',
+    'pages/index/index',
+    'pages/fields/index',
+    'pages/fields/detail/index',
+    'pages/plans/index',
+    'pages/plans/plan-detail/index',
+    'pages/plans/plan-create/index',
+    'pages/plans/strategy-detail/index',
+    'pages/plans/strategy-create/index',
+    'pages/devices/index',
+    'pages/devices/detail/index',
+    'pages/account/index',
+  ],
+  tabBar: {
+    color: '#6b7280',
+    selectedColor: '#2563EB',
+    backgroundColor: '#ffffff',
+    borderStyle: 'black',
+    list: [
+      { pagePath: 'pages/index/index', text: '总览', iconPath: 'assets/tabbar/house-normal.png', selectedIconPath: 'assets/tabbar/house-active.png' },
+      { pagePath: 'pages/fields/index', text: '地块', iconPath: 'assets/tabbar/map-normal.png', selectedIconPath: 'assets/tabbar/map-active.png' },
+      { pagePath: 'pages/plans/index', text: '计划', iconPath: 'assets/tabbar/calendar-normal.png', selectedIconPath: 'assets/tabbar/calendar-active.png' },
+      { pagePath: 'pages/devices/index', text: '设备', iconPath: 'assets/tabbar/radio-normal.png', selectedIconPath: 'assets/tabbar/radio-active.png' },
+      { pagePath: 'pages/account/index', text: '我的', iconPath: 'assets/tabbar/user-normal.png', selectedIconPath: 'assets/tabbar/user-active.png' },
+    ],
+  },
+  window: {
+    navigationBarTitleText: '智慧灌溉',
+    navigationBarBackgroundColor: '#0f3d30',
+    navigationBarTextStyle: 'white',
+    backgroundColor: '#f4f7f2',
+  },
+});
