@@ -13,3 +13,6 @@ web-dev/.env
 services/.env
 services/.env.production
 deploy/nginx/certs/
+deploy/ALIYUN_GITHUB_PAGES_DEPLOY.md
+deploy/docker-compose.aliyun.yml
+deploy/nginx/irrigation.conf
