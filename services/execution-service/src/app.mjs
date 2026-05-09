@@ -25,6 +25,13 @@ function json(req, res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+function errorBody(error, fallbackMessage) {
+  return {
+    error: error instanceof Error ? error.message : fallbackMessage,
+    code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
+  };
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -83,18 +90,21 @@ export function createApp(config) {
             },
           });
         } catch (error) {
-          return json(req, res, 401, { error: error instanceof Error ? error.message : '登录失败' });
+          const statusCode = error && typeof error === 'object' && 'statusCode' in error
+            ? Number(error.statusCode) || 401
+            : 401;
+          return json(req, res, statusCode, errorBody(error, '登录失败'));
         }
       }
 
       if (url.pathname.startsWith('/mini/')) {
         if (req.method === 'POST' && url.pathname === '/mini/auth/logout') {
-          return json(req, res, 200, { data: authService.logout(req) });
+          return json(req, res, 200, { data: await authService.logout(req) });
         }
 
-        const session = authService.getSession(req);
+        const session = await authService.getSession(req);
         if (!session) {
-          return json(req, res, 401, unauthorized());
+          return json(req, res, 401, { ...unauthorized(), code: 'AUTH_SESSION_INVALID' });
         }
 
         if (req.method === 'GET' && url.pathname === '/mini/me') {

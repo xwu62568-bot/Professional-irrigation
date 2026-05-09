@@ -25,6 +25,31 @@ async function request(config, path, options = {}) {
   return response.json();
 }
 
+export async function createMiniSession(config, payload) {
+  const rows = await request(config, 'mini_sessions', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload),
+  });
+  return rows?.[0] ?? null;
+}
+
+export async function fetchMiniSessionByToken(config, token) {
+  const rows = await request(
+    config,
+    `mini_sessions?token=eq.${encodeURIComponent(token)}&select=*`,
+    { method: 'GET' },
+  );
+  return rows?.[0] ?? null;
+}
+
+export async function deleteMiniSessionByToken(config, token) {
+  await request(config, `mini_sessions?token=eq.${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+  });
+}
+
 export async function fetchPlan(config, planId) {
   const rows = await request(
     config,

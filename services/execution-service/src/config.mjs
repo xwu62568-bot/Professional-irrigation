@@ -16,6 +16,7 @@ export function loadConfig() {
     supabaseServiceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY', 'dev-placeholder'),
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'dev-placeholder',
     sessionTtlHours: Number(process.env.MINI_SESSION_TTL_HOURS ?? 24),
+    authUpstreamTimeoutMs: Number(process.env.MINI_AUTH_UPSTREAM_TIMEOUT_MS ?? 8000),
     durationScale: Number(process.env.EXECUTION_DURATION_SCALE ?? 1),
     statusPollMs: Number(process.env.EXECUTION_STATUS_POLL_MS ?? 2000),
     schedulerEnabled: process.env.EXECUTION_SCHEDULER_ENABLED === 'true',
