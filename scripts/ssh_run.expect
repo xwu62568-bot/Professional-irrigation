@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+
+set timeout -1
+set host [lindex $argv 0]
+set user [lindex $argv 1]
+set password [lindex $argv 2]
+set command [lindex $argv 3]
+
+if {$host eq "" || $user eq "" || $password eq "" || $command eq ""} {
+  puts "USAGE: ssh_run.expect <host> <user> <password> <command>"
+  exit 1
+}
+
+spawn ssh -tt -o StrictHostKeyChecking=no $user@$host $command
+expect {
+  "*assword:" {
+    send "$password\r"
+  }
+  timeout {
+    puts "EXPECT_TIMEOUT_WAITING_PASSWORD"
+    exit 2
+  }
+}
+
+expect eof

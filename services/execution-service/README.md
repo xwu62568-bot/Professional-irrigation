@@ -15,6 +15,7 @@
 - `POST /runs/manual-start`
 - `POST /runs/:runId/stop`
 - `GET /runs/:runId`
+- `POST /mini/assistant/messages` 转发到内网 `assistant-service`
 
 定时调度当前规则：
 
@@ -31,6 +32,7 @@ PORT=4310 \
 SUPABASE_URL=... \
 SUPABASE_SERVICE_ROLE_KEY=... \
 MQTT_GATEWAY_BASE_URL=http://127.0.0.1:4320 \
+ASSISTANT_SERVICE_BASE_URL=http://127.0.0.1:4311 \
 EXECUTION_DURATION_SCALE=0.01 \
 EXECUTION_STATUS_POLL_MS=2000 \
 EXECUTION_SCHEDULER_ENABLED=true \

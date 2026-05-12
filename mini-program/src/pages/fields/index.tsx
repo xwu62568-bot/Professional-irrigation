@@ -3,6 +3,7 @@ import { View, Text, ScrollView } from '@tarojs/components';
 import { useEffect, useState } from 'react';
 import type { MiniFieldListItem } from '@irrigation/api';
 import { AppIcon } from '@/components/AppIcon';
+import { AiAssistantFab } from '@/components/AiAssistantFab';
 import { loadFields } from '@/services/dataService';
 
 function fieldStatusLabel(status: MiniFieldListItem['status']) {
@@ -160,6 +161,7 @@ export default function FieldsPage() {
           ))}
         </View>
       </ScrollView>
+      <AiAssistantFab />
     </View>
   );
 }

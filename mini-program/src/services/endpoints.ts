@@ -17,4 +17,5 @@ export const miniApi = {
   strategyDetail: (id: string) => `/mini/strategies/${id}`,
   me: '/mini/me',
   runtime: '/mini/runtime',
+  assistantMessages: '/mini/assistant/messages',
 } as const;

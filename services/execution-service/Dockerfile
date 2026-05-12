@@ -1,11 +1,12 @@
 FROM node:20-bookworm-slim
 
-WORKDIR /app
+WORKDIR /app/execution-service
 
-COPY package.json ./
+COPY execution-service/package.json ./package.json
 RUN npm install --omit=dev
 
-COPY src ./src
+COPY execution-service/src ./src
+COPY shared /app/shared
 
 EXPOSE 4310
 

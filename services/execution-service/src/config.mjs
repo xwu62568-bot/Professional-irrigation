@@ -11,6 +11,7 @@ export function loadConfig() {
     host: process.env.HOST ?? '127.0.0.1',
     port: Number(process.env.PORT ?? 4310),
     mqttGatewayBaseUrl: process.env.MQTT_GATEWAY_BASE_URL ?? 'http://127.0.0.1:4320',
+    assistantServiceBaseUrl: process.env.ASSISTANT_SERVICE_BASE_URL ?? 'http://127.0.0.1:4311',
     wifiDemoDeviceId: process.env.WIFI_DEMO_DEVICE_ID ?? '',
     supabaseUrl: required('SUPABASE_URL', 'http://127.0.0.1:54321'),
     supabaseServiceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY', 'dev-placeholder'),

@@ -3,6 +3,7 @@ import alertCircle from 'lucide-static/icons/alert-circle.svg';
 import alertTriangle from 'lucide-static/icons/alert-triangle.svg';
 import battery from 'lucide-static/icons/battery.svg';
 import bell from 'lucide-static/icons/bell.svg';
+import botMessageSquare from 'lucide-static/icons/bot-message-square.svg';
 import building2 from 'lucide-static/icons/building-2.svg';
 import calendar from 'lucide-static/icons/calendar.svg';
 import checkCircle2 from 'lucide-static/icons/check-circle-2.svg';
@@ -35,6 +36,7 @@ const iconMap = {
   alertTriangle,
   battery,
   bell,
+  botMessageSquare,
   building2,
   calendar,
   checkCircle2,

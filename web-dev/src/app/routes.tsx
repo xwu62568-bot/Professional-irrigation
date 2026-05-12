@@ -10,6 +10,8 @@ import { AutoStrategy } from './pages/AutoStrategy';
 import { Devices } from './pages/Devices';
 import { Account } from './pages/Account';
 import { WifiDeviceDemo } from './pages/WifiDeviceDemo';
+import { AiAssistant } from './pages/AiAssistant';
+import { MiniAiAssistant } from './pages/MiniAiAssistant';
 
 function RedirectToOverview() {
   return <Navigate to="/overview" replace />;
@@ -27,6 +29,10 @@ const routes = [
     Component: Register,
   },
   {
+    path: __WEB_AI_ASSISTANT_MINI_PAGE_ROUTE__,
+    Component: MiniAiAssistant,
+  },
+  {
     path: '/',
     Component: Layout,
     children: [
@@ -37,6 +43,7 @@ const routes = [
       { path: 'irrigation-plan', Component: IrrigationPlan },
       { path: 'auto-strategy', Component: AutoStrategy },
       { path: 'devices', Component: Devices },
+      { path: 'ai-assistant', Component: AiAssistant },
       { path: 'wifi-device-demo', Component: WifiDeviceDemo },
       { path: 'account', Component: Account },
     ],

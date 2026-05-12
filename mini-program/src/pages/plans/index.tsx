@@ -3,6 +3,7 @@ import { View, Text, ScrollView } from '@tarojs/components';
 import { useEffect, useMemo, useState } from 'react';
 import type { DuePlan, Strategy } from '@irrigation/domain';
 import { AppIcon } from '@/components/AppIcon';
+import { AiAssistantFab } from '@/components/AiAssistantFab';
 import { loadPlans, loadStrategies, runPlanAction } from '@/services/dataService';
 
 function planModeLabel(mode: DuePlan['mode']) {
@@ -341,6 +342,7 @@ export default function PlansPage() {
           </ScrollView>
         </>
       )}
+      <AiAssistantFab />
     </View>
   );
 }

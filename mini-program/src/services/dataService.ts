@@ -14,6 +14,8 @@ import {
   type Strategy,
 } from '@irrigation/domain';
 import type {
+  MiniAssistantSendMessageInput,
+  MiniAssistantSendMessageResponse,
   MiniDeviceControlResponse,
   MiniDeviceDetailResponse,
   MiniDeviceListItem,
@@ -29,7 +31,9 @@ import type {
   MiniStrategyListResponse,
 } from '@irrigation/api';
 import { devices, fields, plans, strategies } from '@/data/mockData';
+import Taro from '@tarojs/taro';
 import { runtimeConfig } from './config';
+import { clearSession, ensureAuthenticated } from './auth';
 import { miniApi } from './endpoints';
 import { apiGet, apiPatch, apiPost } from './http';
 
@@ -38,6 +42,50 @@ export interface OverviewPayload {
   devices: Device[];
   plans: Plan[];
   strategies: Strategy[];
+}
+
+export interface MiniAssistantStreamProgress {
+  delta: string;
+  answer: string;
+  conversationId: string;
+  messageId: string;
+  createdAt: number;
+}
+
+interface MiniAssistantStreamEvent {
+  type: 'delta' | 'done' | 'error';
+  delta?: string;
+  answer?: string;
+  conversationId?: string;
+  messageId?: string;
+  createdAt?: number;
+  error?: string;
+}
+
+function decodeAsciiChunk(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let text = '';
+  for (let index = 0; index < bytes.length; index += 1) {
+    text += String.fromCharCode(bytes[index]);
+  }
+  return text;
+}
+
+function parseFinalErrorPayload(data: unknown) {
+  if (!data || typeof data !== 'object' || data instanceof ArrayBuffer) {
+    const text = data instanceof ArrayBuffer ? decodeAsciiChunk(data) : '';
+    if (!text.trim()) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(text) as { error?: string; code?: string };
+    } catch {
+      return { error: text };
+    }
+  }
+
+  return data as { error?: string; code?: string };
 }
 
 function emptyFieldFromListItem(item: MiniFieldListItem): Field {
@@ -290,6 +338,162 @@ export async function createStrategy(input: MiniStrategyCreateInput) {
   }
 
   return apiPost<{ id: string }>(miniApi.strategies, input);
+}
+
+export async function sendAssistantMessage(input: MiniAssistantSendMessageInput) {
+  return sendAssistantMessageStream(input);
+}
+
+export async function sendAssistantMessageStream(
+  input: MiniAssistantSendMessageInput,
+  options?: {
+    onProgress?: (progress: MiniAssistantStreamProgress) => void;
+  },
+) {
+  if (runtimeConfig.useMockData) {
+    const result = {
+      conversationId: input.conversationId || `mock-conversation-${Date.now()}`,
+      messageId: `mock-message-${Date.now()}`,
+      answer: `收到你的问题：“${input.query}”。这是本地 mock 回复，接入 Dify 后会返回真实内容。`,
+      createdAt: Math.floor(Date.now() / 1000),
+    } satisfies MiniAssistantSendMessageResponse;
+    options?.onProgress?.({
+      delta: result.answer,
+      answer: result.answer,
+      conversationId: result.conversationId,
+      messageId: result.messageId,
+      createdAt: result.createdAt,
+    });
+    return result;
+  }
+
+  const token = await ensureAuthenticated();
+  const eventsBuffer = {
+    text: '',
+    answer: '',
+    conversationId: input.conversationId ?? '',
+    messageId: '',
+    createdAt: Math.floor(Date.now() / 1000),
+    error: '',
+  };
+
+  const requestTask = Taro.request<{ error?: string; code?: string; data?: MiniAssistantSendMessageResponse }>({
+    url: `${runtimeConfig.executionServiceUrl}${miniApi.assistantMessages}`,
+    method: 'POST',
+    timeout: 60000,
+    enableChunked: true,
+    responseType: 'arraybuffer',
+    data: input,
+    header: {
+      accept: 'application/x-ndjson',
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+  });
+
+  const streamTask = requestTask as typeof requestTask & {
+    onChunkReceived?: (callback: (result: { data: ArrayBuffer }) => void) => void;
+  };
+
+  const applyEvent = (event: MiniAssistantStreamEvent) => {
+    if (event.type === 'delta') {
+      const delta = String(event.delta ?? '');
+      if (!delta) {
+        return;
+      }
+      eventsBuffer.answer = String(event.answer ?? `${eventsBuffer.answer}${delta}`);
+      eventsBuffer.conversationId = String(event.conversationId ?? eventsBuffer.conversationId);
+      eventsBuffer.messageId = String(event.messageId ?? eventsBuffer.messageId);
+      eventsBuffer.createdAt = Number(event.createdAt ?? eventsBuffer.createdAt);
+      options?.onProgress?.({
+        delta,
+        answer: eventsBuffer.answer,
+        conversationId: eventsBuffer.conversationId,
+        messageId: eventsBuffer.messageId,
+        createdAt: eventsBuffer.createdAt,
+      });
+      return;
+    }
+
+    if (event.type === 'done') {
+      eventsBuffer.answer = String(event.answer ?? eventsBuffer.answer);
+      eventsBuffer.conversationId = String(event.conversationId ?? eventsBuffer.conversationId);
+      eventsBuffer.messageId = String(event.messageId ?? eventsBuffer.messageId);
+      eventsBuffer.createdAt = Number(event.createdAt ?? eventsBuffer.createdAt);
+      return;
+    }
+
+    if (event.type === 'error') {
+      eventsBuffer.error = String(event.error ?? 'AI 回复失败');
+    }
+  };
+
+  streamTask.onChunkReceived?.((result) => {
+    eventsBuffer.text += decodeAsciiChunk(result.data);
+    const lines = eventsBuffer.text.split('\n');
+    eventsBuffer.text = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      try {
+        applyEvent(JSON.parse(trimmed) as MiniAssistantStreamEvent);
+      } catch {
+        eventsBuffer.text = `${trimmed}${eventsBuffer.text}`;
+        break;
+      }
+    }
+  });
+
+  const response = await requestTask.catch((error) => {
+    const errMsg = error && typeof error === 'object' && 'errMsg' in error ? String(error.errMsg ?? '') : '';
+    if (/timeout/i.test(errMsg)) {
+      throw new Error('网络超时，请稍后重试');
+    }
+    if (/refused|ECONNREFUSED/i.test(errMsg)) {
+      throw new Error('服务未启动或当前地址不可达');
+    }
+    if (/ssl|tls|certificate/i.test(errMsg)) {
+      throw new Error('安全连接失败，请检查网络或证书配置');
+    }
+    if (/fail/i.test(errMsg)) {
+      throw new Error(`请求发送失败：${errMsg || 'POST 请求发送失败'}`);
+    }
+    throw new Error('AI 服务请求发送失败');
+  });
+
+  if (eventsBuffer.text.trim()) {
+    try {
+      applyEvent(JSON.parse(eventsBuffer.text.trim()) as MiniAssistantStreamEvent);
+    } catch {
+      // Ignore trailing partial payload. The final response status check below will still guard failures.
+    }
+  }
+
+  if (response.statusCode === 401) {
+    clearSession();
+    const payload = parseFinalErrorPayload(response.data);
+    throw new Error(payload?.error ?? '登录已失效，请重新登录');
+  }
+
+  if (response.statusCode >= 400) {
+    const payload = parseFinalErrorPayload(response.data);
+    throw new Error(payload?.error ?? eventsBuffer.error ?? '请求失败');
+  }
+
+  if (eventsBuffer.error) {
+    throw new Error(eventsBuffer.error);
+  }
+
+  return {
+    conversationId: eventsBuffer.conversationId,
+    messageId: eventsBuffer.messageId || `assistant-${Date.now()}`,
+    answer: eventsBuffer.answer,
+    createdAt: eventsBuffer.createdAt,
+  } satisfies MiniAssistantSendMessageResponse;
 }
 
 export async function loadFieldDetail(id: string) {

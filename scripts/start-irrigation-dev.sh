@@ -39,6 +39,8 @@ load_dotenv_file "$SERVICES_ENV_FILE"
 export SUPABASE_URL="${SUPABASE_URL:-${VITE_SUPABASE_URL:-}}"
 export MQTT_GATEWAY_BASE_URL="${MQTT_GATEWAY_BASE_URL:-http://127.0.0.1:4320}"
 export VITE_EXECUTION_SERVICE_URL="${VITE_EXECUTION_SERVICE_URL:-http://127.0.0.1:4310}"
+export MINI_ASSISTANT_SERVICE_URL="${MINI_ASSISTANT_SERVICE_URL:-http://127.0.0.1:4311}"
+export ASSISTANT_SERVICE_BASE_URL="${ASSISTANT_SERVICE_BASE_URL:-$MINI_ASSISTANT_SERVICE_URL}"
 
 if [[ -z "${SUPABASE_URL:-}" ]]; then
   echo "Missing SUPABASE_URL. Add it to services/.env or web-dev/.env." >&2
@@ -86,6 +88,7 @@ trap cleanup EXIT INT TERM
 
 kill_port_if_listening 4310
 kill_port_if_listening 4320
+kill_port_if_listening 4311
 kill_port_if_listening 5173
 
 echo "Starting mqtt-gateway-service on :4320"
@@ -96,6 +99,10 @@ echo "Starting execution-service on :4310"
 (cd "$ROOT_DIR/services/execution-service" && npm run start) &
 PIDS+=($!)
 
+echo "Starting assistant-service on :4311"
+(cd "$ROOT_DIR/services/assistant-service" && npm run start) &
+PIDS+=($!)
+
 echo "Starting web-dev on :5173"
 (cd "$ROOT_DIR/web-dev" && npm run dev -- --host 0.0.0.0) &
 PIDS+=($!)
@@ -104,6 +111,7 @@ echo
 echo "Services are starting:"
 echo "  web-dev: http://127.0.0.1:5173"
 echo "  execution-service: ${VITE_EXECUTION_SERVICE_URL}"
+echo "  assistant-service: ${MINI_ASSISTANT_SERVICE_URL}"
 echo "  mqtt-gateway-service: ${MQTT_GATEWAY_BASE_URL}"
 echo
 echo "Press Ctrl+C to stop all processes."

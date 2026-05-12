@@ -3,6 +3,7 @@ import { View, Text, ScrollView } from '@tarojs/components';
 import { useEffect, useMemo, useState } from 'react';
 import type { MiniDeviceListItem } from '@irrigation/api';
 import { AppIcon } from '@/components/AppIcon';
+import { AiAssistantFab } from '@/components/AiAssistantFab';
 import { loadDevices } from '@/services/dataService';
 
 type DeviceFilter = 'all' | 'online' | 'offline' | 'alarm';
@@ -222,6 +223,7 @@ export default function DevicesPage() {
           </View>
         </View>
       </ScrollView>
+      <AiAssistantFab />
     </View>
   );
 }

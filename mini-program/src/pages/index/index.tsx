@@ -2,6 +2,7 @@ import Taro from '@tarojs/taro';
 import { View, Text, Map } from '@tarojs/components';
 import { useEffect, useState } from 'react';
 import { AppIcon } from '@/components/AppIcon';
+import { AiAssistantFab } from '@/components/AiAssistantFab';
 import { loadOverviewViewModel } from '@/services/dataService';
 import { buildOverviewMap } from '@/utils/map';
 
@@ -299,6 +300,7 @@ export default function IndexPage() {
           </View>
         </View>
       </View>
+      <AiAssistantFab />
     </View>
   );
 }

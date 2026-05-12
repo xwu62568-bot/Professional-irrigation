@@ -1,11 +1,18 @@
 const path = require('path');
+const aiAssistantConfig = require('../../config/ai-assistant.js');
 
 const runtimeProfile = process.env.MINI_PROGRAM_PROFILE === 'test' ? 'test' : 'local';
 const isTestProfile = runtimeProfile === 'test';
 const executionServiceUrl = process.env.MINI_EXECUTION_SERVICE_URL
   || (isTestProfile ? 'https://api.ssdsdeeefd.xyz/api/execution' : 'http://127.0.0.1:4310');
+const assistantServiceUrl = process.env.MINI_ASSISTANT_SERVICE_URL
+  || (isTestProfile ? 'https://api.ssdsdeeefd.xyz/api/assistant' : 'http://127.0.0.1:4311');
 const mqttGatewayUrl = process.env.MINI_MQTT_GATEWAY_URL
   || (isTestProfile ? 'https://api.ssdsdeeefd.xyz/api/mqtt' : 'http://127.0.0.1:4320');
+const aiAssistantUrl =
+  process.env[aiAssistantConfig.miniProgramPageUrlEnvVarName]
+  || process.env[aiAssistantConfig.chatbotEnvVarName]
+  || aiAssistantConfig.defaultChatbotUrl;
 const useMockData = process.env.MINI_USE_MOCK_DATA === 'true';
 const defaultAuthEmail = '88403120@qq.com';
 const defaultAuthPassword = '123456';
@@ -35,7 +42,9 @@ const config = {
     __MINI_PROGRAM_PROFILE__: JSON.stringify(runtimeProfile),
     __MINI_USE_MOCK_DATA__: JSON.stringify(useMockData),
     __MINI_EXECUTION_SERVICE_URL__: JSON.stringify(executionServiceUrl),
+    __MINI_ASSISTANT_SERVICE_URL__: JSON.stringify(assistantServiceUrl),
     __MINI_MQTT_GATEWAY_URL__: JSON.stringify(mqttGatewayUrl),
+    __MINI_AI_ASSISTANT_URL__: JSON.stringify(aiAssistantUrl),
     __MINI_AUTH_EMAIL__: JSON.stringify(process.env.MINI_AUTH_EMAIL ?? defaultAuthEmail),
     __MINI_AUTH_PASSWORD__: JSON.stringify(process.env.MINI_AUTH_PASSWORD ?? defaultAuthPassword),
   },

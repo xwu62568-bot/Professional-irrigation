@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+
+set timeout 120
+set local_path [lindex $argv 0]
+set remote_user [lindex $argv 1]
+set remote_host [lindex $argv 2]
+set remote_path [lindex $argv 3]
+set password [lindex $argv 4]
+
+if {$local_path eq "" || $remote_user eq "" || $remote_host eq "" || $remote_path eq "" || $password eq ""} {
+  puts "USAGE: scp_upload.expect <local_path> <remote_user> <remote_host> <remote_path> <password>"
+  exit 1
+}
+
+spawn scp -o StrictHostKeyChecking=no $local_path $remote_user@$remote_host:$remote_path
+expect {
+  "*assword:" {
+    send "$password\r"
+  }
+  timeout {
+    puts "EXPECT_TIMEOUT_WAITING_PASSWORD"
+    exit 2
+  }
+}
+
+expect eof

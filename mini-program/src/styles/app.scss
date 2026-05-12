@@ -5,6 +5,245 @@ page {
   font-family: sans-serif;
 }
 
+.assistant-fab {
+  position: fixed;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 60px;
+  height: 68px;
+  border-radius: 20px;
+  background: linear-gradient(160deg, #2f6df6 0%, #245fe0 72%, #1f53cc 100%);
+  box-shadow: 0 14px 26px rgba(36, 95, 224, 0.24);
+}
+
+.assistant-fab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.assistant-fab-text {
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.assistant-page {
+  min-height: 100vh;
+  padding: 24px 18px;
+  background: linear-gradient(180deg, #f4f8fb 0%, #f8fbfd 100%);
+}
+
+.assistant-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.assistant-empty-title {
+  color: #1b2430;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.assistant-empty-text {
+  color: #5f6f86;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.assistant-empty-link {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f766e;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  word-break: break-all;
+}
+
+.assistant-native-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  height: 100vh;
+  background: linear-gradient(180deg, #eef5ff 0%, #f8fbff 34%, #ffffff 100%);
+  overflow: hidden;
+}
+
+.assistant-native-hero {
+  padding: 12px 16px 10px;
+}
+
+.assistant-native-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.assistant-native-title {
+  margin-top: 10px;
+  color: #10233f;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.assistant-native-subtitle {
+  margin-top: 6px;
+  color: #5b6c86;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.assistant-native-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.assistant-native-reset {
+  margin: 0;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2563eb;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  font-size: 12px;
+  line-height: 30px;
+}
+
+.assistant-native-reset::after {
+  border: 0;
+}
+
+.assistant-native-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.assistant-native-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 16px 20px;
+}
+
+.assistant-native-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-native-item.is-user {
+  align-items: flex-end;
+}
+
+.assistant-native-item.is-assistant {
+  align-items: flex-start;
+}
+
+.assistant-native-meta {
+  display: flex;
+  gap: 8px;
+  color: #7d8ca4;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.assistant-native-bubble {
+  max-width: 88%;
+  padding: 12px 14px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.assistant-native-bubble.is-assistant {
+  background: #ffffff;
+  color: #1b2430;
+  border: 1px solid rgba(29, 42, 68, 0.08);
+  box-shadow: 0 10px 24px rgba(27, 36, 48, 0.06);
+}
+
+.assistant-native-bubble.is-user {
+  background: linear-gradient(135deg, #2f6df6 0%, #245fe0 100%);
+  color: #ffffff;
+  box-shadow: 0 12px 22px rgba(47, 109, 246, 0.18);
+}
+
+.assistant-native-composer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border-top: 1px solid rgba(29, 42, 68, 0.08);
+  backdrop-filter: blur(10px);
+  box-sizing: border-box;
+}
+
+.assistant-native-input {
+  flex: 1;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: #f4f7fc;
+  color: #1b2430;
+  font-size: 14px;
+}
+
+.assistant-native-send {
+  margin: 0;
+  min-width: 86px;
+  height: 44px;
+  line-height: 44px;
+  padding: 0 18px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2f6df6 0%, #245fe0 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.assistant-native-send[disabled] {
+  opacity: 0.55;
+}
+
+.assistant-native-send::after {
+  border: 0;
+}
+
+.assistant-native-tail {
+  width: 100%;
+  height: 2px;
+}
+
 .screen {
   min-height: 100vh;
   padding: 20px 16px 32px;

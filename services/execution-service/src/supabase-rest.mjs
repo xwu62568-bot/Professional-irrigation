@@ -7,11 +7,44 @@ function headers(config, extra = {}) {
   };
 }
 
+function errorDetails(error) {
+  if (!(error instanceof Error)) {
+    return { message: String(error) };
+  }
+
+  const cause = error.cause && typeof error.cause === 'object'
+    ? {
+        message: 'message' in error.cause ? String(error.cause.message) : undefined,
+        code: 'code' in error.cause ? String(error.cause.code) : undefined,
+        host: 'host' in error.cause ? String(error.cause.host) : undefined,
+        port: 'port' in error.cause ? String(error.cause.port) : undefined,
+      }
+    : undefined;
+
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    cause,
+  };
+}
+
 async function request(config, path, options = {}) {
-  const response = await fetch(`${config.supabaseUrl}/rest/v1/${path}`, {
-    ...options,
-    headers: headers(config, options.headers),
-  });
+  const url = `${config.supabaseUrl}/rest/v1/${path}`;
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: headers(config, options.headers),
+    });
+  } catch (error) {
+    console.error('[execution-service] supabase request failed', {
+      url,
+      method: options.method ?? 'GET',
+      details: errorDetails(error),
+    });
+    throw error;
+  }
 
   if (!response.ok) {
     const text = await response.text();

@@ -3,6 +3,7 @@ import { View, Text } from '@tarojs/components';
 import { useEffect, useState } from 'react';
 import type { MiniMeResponse } from '@irrigation/api';
 import { AppIcon } from '@/components/AppIcon';
+import { AiAssistantFab } from '@/components/AiAssistantFab';
 import { logoutCurrentSession } from '@/services/auth';
 import { runtimeConfig } from '@/services/config';
 import { loadMiniMe, loadRuntimeInfo } from '@/services/dataService';
@@ -193,6 +194,7 @@ export default function AccountPage() {
           <Text className="account-footer-text">© 2026 All Rights Reserved</Text>
         </View>
       </View>
+      <AiAssistantFab />
     </View>
   );
 }

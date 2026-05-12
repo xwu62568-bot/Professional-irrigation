@@ -22,6 +22,9 @@ interface ImportMetaEnv {
   readonly VITE_WIFI_DEMO_TOPIC_DEVICE_INFO_UPDATE?: string;
 }
 
+declare const __WEB_AI_ASSISTANT_CHATBOT_URL__: string;
+declare const __WEB_AI_ASSISTANT_MINI_PAGE_ROUTE__: string;
+
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }

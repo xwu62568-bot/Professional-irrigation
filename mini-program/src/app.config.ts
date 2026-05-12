@@ -12,6 +12,7 @@ export default defineAppConfig({
     'pages/devices/index',
     'pages/devices/detail/index',
     'pages/account/index',
+    'pages/assistant/index',
   ],
   tabBar: {
     color: '#6b7280',

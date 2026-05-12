@@ -1,0 +1,38 @@
+#!/usr/bin/expect -f
+
+set timeout 20
+set host [lindex $argv 0]
+set user [lindex $argv 1]
+set password [lindex $argv 2]
+
+if {$host eq "" || $user eq "" || $password eq ""} {
+  puts "USAGE: ssh_check.expect <host> <user> <password>"
+  exit 1
+}
+
+spawn ssh -tt -o StrictHostKeyChecking=no $user@$host
+expect {
+  "*assword:" {
+    send "$password\r"
+  }
+  timeout {
+    puts "EXPECT_TIMEOUT_WAITING_PASSWORD"
+    exit 2
+  }
+}
+
+expect {
+  "*Permission denied*" {
+    puts "AUTH_FAILED"
+    exit 3
+  }
+  "*root@*" {
+    send "hostname; pwd; whoami; exit\r"
+  }
+  timeout {
+    puts "EXPECT_TIMEOUT_AFTER_PASSWORD"
+    exit 4
+  }
+}
+
+expect eof

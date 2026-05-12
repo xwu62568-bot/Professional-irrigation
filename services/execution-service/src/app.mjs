@@ -49,6 +49,45 @@ function notFound(req, res) {
   json(req, res, 404, { error: 'Not Found' });
 }
 
+async function proxyAssistantMessage(req, res, config) {
+  const body = await readJson(req);
+  const upstream = await fetch(`${config.assistantServiceBaseUrl}/mini/assistant/messages`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : '',
+    },
+    body: JSON.stringify(body),
+  });
+  const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream';
+
+  res.writeHead(upstream.status, {
+    'content-type': contentType,
+    'cache-control': upstream.headers.get('cache-control') ?? 'no-cache, no-transform',
+    'x-accel-buffering': upstream.headers.get('x-accel-buffering') ?? 'no',
+    ...corsHeaders(req),
+  });
+  res.flushHeaders?.();
+
+  if (!upstream.body) {
+    const text = await upstream.text();
+    res.end(text);
+    return;
+  }
+
+  const reader = upstream.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (value) {
+      res.write(Buffer.from(value));
+    }
+  }
+  res.end();
+}
+
 export function createApp(config) {
   const runService = config.runService;
   const miniService = config.miniService;
@@ -94,6 +133,25 @@ export function createApp(config) {
             ? Number(error.statusCode) || 401
             : 401;
           return json(req, res, statusCode, errorBody(error, '登录失败'));
+        }
+      }
+
+      if (req.method === 'POST' && url.pathname === '/mini/assistant/messages') {
+        try {
+          return await proxyAssistantMessage(req, res, config);
+        } catch (error) {
+          console.error('[execution-service] /mini/assistant/messages proxy failed', {
+            assistantServiceBaseUrl: config.assistantServiceBaseUrl,
+            error: error instanceof Error ? error.message : String(error),
+            cause:
+              error instanceof Error && error.cause && typeof error.cause === 'object'
+                ? {
+                    message: 'message' in error.cause ? error.cause.message : undefined,
+                    code: 'code' in error.cause ? error.cause.code : undefined,
+                  }
+                : undefined,
+          });
+          return json(req, res, 502, { error: 'AI 服务暂不可用，请稍后重试' });
         }
       }
 

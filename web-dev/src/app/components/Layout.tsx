@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { useEffect, useState } from 'react';
 import {
-  LayoutDashboard, Map, CalendarClock, Zap, Cpu, User, Droplets, LogOut, ChevronRight, Menu, X
+  LayoutDashboard, Map, CalendarClock, Zap, Cpu, User, Droplets, LogOut, ChevronRight, Menu, X, Bot
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -11,6 +11,7 @@ const navItems = [
   { to: '/irrigation-plan', label: '轮灌计划', icon: CalendarClock },
   { to: '/auto-strategy', label: '自动策略', icon: Zap },
   { to: '/devices', label: '设备', icon: Cpu },
+  { to: '/ai-assistant', label: 'AI助手', icon: Bot },
   { to: '/account', label: '账户', icon: User },
 ];
 
