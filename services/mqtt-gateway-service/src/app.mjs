@@ -30,6 +30,14 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+function normalizeDurationSeconds(value, fallback = 60) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(7200, Math.max(1, Math.round(parsed)));
+}
+
 export function createApp(config) {
   const gateway = config.gateway;
 
@@ -77,7 +85,13 @@ export function createApp(config) {
         const result = await gateway.sendControl(deviceId, {
           stationIndex: Number(body.stationIndex),
           type: 'on',
-          durationSeconds: Number(body.durationSeconds ?? 0),
+          durationSeconds: normalizeDurationSeconds(body.durationSeconds, 60),
+          context: {
+            runId: body.runId ?? null,
+            runStepId: body.runStepId ?? null,
+            planId: body.planId ?? null,
+            deviceId,
+          },
         });
         return json(req, res, 202, { accepted: true, command: 'open', deviceId, result, state: gateway.getState() });
       } catch (error) {
@@ -95,7 +109,13 @@ export function createApp(config) {
         const result = await gateway.sendControl(deviceId, {
           stationIndex: Number(body.stationIndex),
           type: 'off',
-          durationSeconds: Number(body.durationSeconds ?? 0),
+          durationSeconds: normalizeDurationSeconds(body.durationSeconds, 1),
+          context: {
+            runId: body.runId ?? null,
+            runStepId: body.runStepId ?? null,
+            planId: body.planId ?? null,
+            deviceId,
+          },
         });
         return json(req, res, 202, { accepted: true, command: 'close', deviceId, result, state: gateway.getState() });
       } catch (error) {

@@ -1,6 +1,6 @@
-import Taro, { useDidShow } from '@tarojs/taro';
+import Taro, { useDidHide, useDidShow } from '@tarojs/taro';
 import { View, Text, ScrollView } from '@tarojs/components';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DuePlan, Strategy } from '@irrigation/domain';
 import { AppIcon } from '@/components/AppIcon';
 import { AiAssistantFab } from '@/components/AiAssistantFab';
@@ -30,18 +30,41 @@ export default function PlansPage() {
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const liveRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshInFlight = useRef(false);
   const statusBarHeight = Taro.getSystemInfoSync().statusBarHeight ?? 20;
 
-  async function refreshPlansAndStrategies() {
-    setRefreshing(true);
+  async function refreshPlansAndStrategies(options: { silent?: boolean } = {}) {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    if (!options.silent) setRefreshing(true);
     try {
       const [nextPlans, nextStrategies] = await Promise.all([loadPlans(), loadStrategies()]);
       setItems(nextPlans);
       setStrategies(nextStrategies);
+    } catch (_error) {
+      // Keep silent for periodic refresh; explicit actions already show toast.
     } finally {
+      refreshInFlight.current = false;
       setLoading(false);
-      setRefreshing(false);
+      if (!options.silent) setRefreshing(false);
     }
+  }
+
+  function clearLiveRefreshTimer() {
+    if (liveRefreshTimer.current) {
+      clearTimeout(liveRefreshTimer.current);
+      liveRefreshTimer.current = null;
+    }
+  }
+
+  function scheduleLiveRefresh(delayMs: number) {
+    clearLiveRefreshTimer();
+    liveRefreshTimer.current = setTimeout(async () => {
+      await refreshPlansAndStrategies({ silent: true });
+      const nextDelay = activeTab === 'plans' ? 8000 : 15000;
+      scheduleLiveRefresh(nextDelay);
+    }, delayMs);
   }
 
   useEffect(() => {
@@ -50,7 +73,27 @@ export default function PlansPage() {
 
   useDidShow(() => {
     void refreshPlansAndStrategies();
+    scheduleLiveRefresh(8000);
   });
+
+  useDidHide(() => {
+    clearLiveRefreshTimer();
+  });
+
+  useEffect(() => {
+    if (!loading) {
+      scheduleLiveRefresh(activeTab === 'plans' ? 8000 : 15000);
+    }
+    return () => {
+      clearLiveRefreshTimer();
+    };
+  }, [activeTab, loading]);
+
+  useEffect(() => {
+    return () => {
+      clearLiveRefreshTimer();
+    };
+  }, []);
 
   const totalHours = useMemo(
     () => Math.round(items.reduce((sum, item) => sum + item.totalDuration, 0) / 60),
@@ -62,6 +105,7 @@ export default function PlansPage() {
       setRunningActionId(`${planId}:${action}`);
       const result = await runPlanAction(planId, action);
       Taro.showToast({ title: result.message || '操作已提交', icon: 'none' });
+      await refreshPlansAndStrategies({ silent: true });
     } catch (error) {
       Taro.showToast({ title: error instanceof Error ? error.message : '操作失败', icon: 'none' });
     } finally {

@@ -19,6 +19,9 @@ export function loadConfig() {
     clientCertPath: process.env.WIFI_DEMO_CLIENT_CERT_PATH ?? '../certs/hyecosmart-client.p12',
     clientCertPassphrase: process.env.WIFI_DEMO_CLIENT_CERT_PASSPHRASE ?? '',
     idleDisconnectMs: Number(process.env.WIFI_DEMO_MQTT_IDLE_DISCONNECT_MS ?? 6000),
+    executionEventCallbackUrl: process.env.EXECUTION_EVENT_CALLBACK_URL ?? 'http://127.0.0.1:4310/internal/device-events/ack',
+    executionEventCallbackToken: process.env.EXECUTION_EVENT_CALLBACK_TOKEN ?? '',
+    executionAckSignatureSecret: process.env.EXECUTION_ACK_SIGNATURE_SECRET ?? '',
     serviceName: 'mqtt-gateway-service',
   };
 }

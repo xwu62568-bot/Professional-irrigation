@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.mjs",
-    "start": "node src/index.mjs"
+    "start": "node src/index.mjs",
+    "ops:resync-auto-plans": "node scripts/resync-auto-plan-jobs.mjs",
+    "test": "node --test src/*.test.mjs src/*.p1-*.mjs",
+    "test:p0": "node --test src/*.test.mjs",
+    "test:p1": "node --test src/*.p1-*.mjs"
   }
 }

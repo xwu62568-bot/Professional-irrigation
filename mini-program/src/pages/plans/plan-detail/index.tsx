@@ -1,6 +1,6 @@
-import Taro, { useLoad } from '@tarojs/taro';
+import Taro, { useDidHide, useDidShow, useLoad } from '@tarojs/taro';
 import { View, Text } from '@tarojs/components';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Plan } from '@irrigation/domain';
 import { AppIcon } from '@/components/AppIcon';
 import { loadFieldDetail, loadPlanDetail, runPlanAction } from '@/services/dataService';
@@ -39,11 +39,17 @@ export default function PlanDetailPage() {
   const [zoneNames, setZoneNames] = useState<Record<string, string>>({});
   const [runningAction, setRunningAction] = useState<'start' | 'pause' | 'stop' | null>(null);
   const [loading, setLoading] = useState(true);
+  const liveRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentPlanId = useRef<string>('');
+  const refreshInFlight = useRef(false);
 
-  useLoad(async () => {
+  async function refreshPlanDetail(planId: string, options: { silent?: boolean } = {}) {
+    if (!planId) return;
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
-      const id = Taro.getCurrentInstance().router?.params?.id ?? '';
-      const detail = await loadPlanDetail(id);
+      if (!options.silent) setLoading(true);
+      const detail = await loadPlanDetail(planId);
       setPlan(detail?.plan ?? null);
       setFieldName(detail?.fieldName ?? '');
       if (detail?.plan?.fieldId) {
@@ -52,9 +58,50 @@ export default function PlanDetailPage() {
         setZoneNames(names);
       }
     } finally {
-      setLoading(false);
+      refreshInFlight.current = false;
+      if (!options.silent) setLoading(false);
     }
+  }
+
+  function clearLiveRefreshTimer() {
+    if (liveRefreshTimer.current) {
+      clearTimeout(liveRefreshTimer.current);
+      liveRefreshTimer.current = null;
+    }
+  }
+
+  function scheduleLiveRefresh(delayMs = 8000) {
+    clearLiveRefreshTimer();
+    liveRefreshTimer.current = setTimeout(async () => {
+      if (currentPlanId.current) {
+        await refreshPlanDetail(currentPlanId.current, { silent: true });
+      }
+      scheduleLiveRefresh(8000);
+    }, delayMs);
+  }
+
+  useLoad(async () => {
+    const id = Taro.getCurrentInstance().router?.params?.id ?? '';
+    currentPlanId.current = id;
+    await refreshPlanDetail(id);
   });
+
+  useDidShow(() => {
+    if (currentPlanId.current) {
+      void refreshPlanDetail(currentPlanId.current);
+    }
+    scheduleLiveRefresh(8000);
+  });
+
+  useDidHide(() => {
+    clearLiveRefreshTimer();
+  });
+
+  useEffect(() => {
+    return () => {
+      clearLiveRefreshTimer();
+    };
+  }, []);
 
   const totalHours = useMemo(
     () => (plan ? Math.round((plan.totalDuration / 60) * 10) / 10 : 0),
@@ -67,6 +114,7 @@ export default function PlanDetailPage() {
       setRunningAction(action);
       const result = await runPlanAction(plan.id, action);
       Taro.showToast({ title: result.message || '操作已提交', icon: 'none' });
+      await refreshPlanDetail(plan.id, { silent: true });
     } catch (error) {
       Taro.showToast({ title: error instanceof Error ? error.message : '操作失败', icon: 'none' });
     } finally {

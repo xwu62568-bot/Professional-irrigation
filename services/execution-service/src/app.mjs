@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 
 function corsHeaders(req) {
   return {
@@ -47,6 +48,52 @@ async function readJson(req) {
 
 function notFound(req, res) {
   json(req, res, 404, { error: 'Not Found' });
+}
+
+function safeEqualHex(a, b) {
+  if (!a || !b) return false;
+  const aa = Buffer.from(a, 'hex');
+  const bb = Buffer.from(b, 'hex');
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
+}
+
+export function verifyAckSignature(config, body, headers) {
+  if (!config.ackSignatureSecret) return true;
+  const signature = typeof headers['x-ack-signature'] === 'string' ? headers['x-ack-signature'] : '';
+  const timestamp = typeof headers['x-ack-timestamp'] === 'string' ? Number(headers['x-ack-timestamp']) : 0;
+  if (!signature || !timestamp || !Number.isFinite(timestamp)) return false;
+  if (Math.abs(Date.now() - timestamp) > config.ackSignatureSkewMs) return false;
+  const payload = `${timestamp}.${JSON.stringify(body)}`;
+  const expected = crypto.createHmac('sha256', config.ackSignatureSecret).update(payload).digest('hex');
+  return safeEqualHex(signature, expected);
+}
+
+const usedAckNonces = new Map();
+function cleanupUsedNonces(maxAgeMs) {
+  const now = Date.now();
+  for (const [nonce, ts] of usedAckNonces.entries()) {
+    if (now - ts > maxAgeMs) {
+      usedAckNonces.delete(nonce);
+    }
+  }
+}
+
+export function verifyAckNonce(config, headers) {
+  const nonce = typeof headers['x-ack-nonce'] === 'string' ? headers['x-ack-nonce'].trim() : '';
+  if (!nonce) {
+    return false;
+  }
+  cleanupUsedNonces(config.ackSignatureSkewMs);
+  if (usedAckNonces.has(nonce)) {
+    return false;
+  }
+  usedAckNonces.set(nonce, Date.now());
+  return true;
+}
+
+export function resetAckNonceStoreForTest() {
+  usedAckNonces.clear();
 }
 
 async function proxyAssistantMessage(req, res, config) {
@@ -113,7 +160,65 @@ export function createApp(config) {
           service: config.serviceName,
           mqttGatewayBaseUrl: config.mqttGatewayBaseUrl,
           miniApi: true,
+          engineMode: config.engineMode,
+          rolloutMode: config.rolloutMode,
+          runtimeMetrics: runService.getRuntimeMetrics?.() ?? null,
         });
+      }
+
+      if (req.method === 'POST' && url.pathname.startsWith('/internal/')) {
+        const token = typeof req.headers['x-internal-token'] === 'string'
+          ? req.headers['x-internal-token']
+          : '';
+        if (!config.internalAuthToken || token !== config.internalAuthToken) {
+          return json(req, res, 401, { error: 'Unauthorized internal access' });
+        }
+
+        if (url.pathname.startsWith('/internal/plans/') && url.pathname.endsWith('/dispatch')) {
+          const planId = url.pathname.split('/')[3] ?? '';
+          try {
+            const run = await runService.startScheduledRun(planId);
+            return json(req, res, 202, { data: { accepted: true, runId: run.id } });
+          } catch (error) {
+            return json(req, res, 400, { error: error instanceof Error ? error.message : '计划调度失败' });
+          }
+        }
+
+        if (url.pathname.startsWith('/internal/commands/') && url.pathname.endsWith('/dispatch')) {
+          const commandId = url.pathname.split('/')[3] ?? '';
+          try {
+            const result = await runService.dispatchCommand(commandId);
+            return json(req, res, 200, { data: result });
+          } catch (error) {
+            return json(req, res, 400, { error: error instanceof Error ? error.message : '命令分发失败' });
+          }
+        }
+
+        if (url.pathname === '/internal/device-events/ack') {
+          try {
+            const body = await readJson(req);
+            if (!verifyAckSignature(config, body, req.headers)) {
+              return json(req, res, 401, { error: 'Invalid ACK signature' });
+            }
+            if (!verifyAckNonce(config, req.headers)) {
+              return json(req, res, 409, { error: 'Duplicate or missing ACK nonce' });
+            }
+            await runService.handleGatewayAckEvent(body);
+            return json(req, res, 202, { data: { accepted: true } });
+          } catch (error) {
+            return json(req, res, 400, { error: error instanceof Error ? error.message : '回执处理失败' });
+          }
+        }
+
+        if (url.pathname.startsWith('/internal/steps/') && url.pathname.endsWith('/timeout')) {
+          const stepId = url.pathname.split('/')[3] ?? '';
+          try {
+            const result = await runService.handleStepTimeout(stepId);
+            return json(req, res, 202, { data: result });
+          } catch (error) {
+            return json(req, res, 400, { error: error instanceof Error ? error.message : '步骤超时处理失败' });
+          }
+        }
       }
 
       if (req.method === 'POST' && url.pathname === '/mini/auth/login') {
@@ -299,6 +404,7 @@ export function createApp(config) {
           try {
             const body = await readJson(req);
             const result = await miniService.createPlan(session.user.id, body);
+            await runService.syncPlanSchedule(result.id);
             return json(req, res, 201, { data: result });
           } catch (error) {
             return json(req, res, 400, { error: error instanceof Error ? error.message : '计划创建失败' });
@@ -310,6 +416,7 @@ export function createApp(config) {
           try {
             const body = await readJson(req);
             const result = await miniService.updatePlan(session.user.id, planId, body);
+            await runService.syncPlanSchedule(result.id);
             return json(req, res, 200, { data: result });
           } catch (error) {
             return json(req, res, 400, { error: error instanceof Error ? error.message : '计划更新失败' });

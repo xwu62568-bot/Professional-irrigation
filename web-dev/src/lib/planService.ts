@@ -318,3 +318,19 @@ export async function deletePlanInSupabase(planId: string) {
     throw error;
   }
 }
+
+export function subscribeRunRealtime(onChange: () => void) {
+  if (!supabase) {
+    return () => {};
+  }
+  const channel = supabase
+    .channel('execution-realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'plan_runs' }, () => onChange())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'plan_run_steps' }, () => onChange())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'device_events' }, () => onChange())
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import mqtt from 'mqtt';
 
 function resolveProjectFile(relativePath) {
@@ -44,6 +45,14 @@ function getTopics(config) {
   };
 }
 
+function normalizeDurationSeconds(value, fallback = 1) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(7200, Math.max(1, Math.round(parsed)));
+}
+
 export function createMqttGateway(config, logger = console) {
   const state = {
     connectionStatus: 'idle',
@@ -65,6 +74,42 @@ export function createMqttGateway(config, logger = console) {
 
   function log(event, payload) {
     logger.log(`[mqtt-gateway-service] ${event}`, payload ?? '');
+  }
+
+  async function postExecutionAck(payload) {
+    if (!config.executionEventCallbackUrl || !config.executionEventCallbackToken) {
+      return;
+    }
+    const nonce = crypto.randomUUID();
+    const timestamp = Date.now();
+    const signatureBase = `${timestamp}.${JSON.stringify(payload)}`;
+    const signature = config.executionAckSignatureSecret
+      ? crypto.createHmac('sha256', config.executionAckSignatureSecret).update(signatureBase).digest('hex')
+      : '';
+    try {
+      const response = await fetch(config.executionEventCallbackUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-token': config.executionEventCallbackToken,
+          'x-ack-timestamp': String(timestamp),
+          'x-ack-nonce': nonce,
+          ...(signature ? { 'x-ack-signature': signature } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        log('execution-callback:rejected', {
+          status: response.status,
+          body: errorText,
+        });
+      }
+    } catch (error) {
+      log('execution-callback:error', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   function setState(patch) {
@@ -107,6 +152,17 @@ export function createMqttGateway(config, logger = console) {
         nextPatch.valveStatus = mergeValveStatusItem(lastControlCommand.stationIndex, lastControlCommand.type);
       }
       setState(nextPatch);
+      if (lastControlCommand?.context) {
+        void postExecutionAck({
+          ...lastControlCommand.context,
+          success: controlReply === 0,
+          action: lastControlCommand.type === 'on' ? 'open' : 'close',
+          stationIndex: lastControlCommand.stationIndex,
+          error: controlReply === 0 ? null : `gateway reply code: ${controlReply}`,
+          correlationKey: message?.msgId ?? null,
+          payload: message,
+        });
+      }
       return;
     }
 
@@ -281,7 +337,10 @@ export function createMqttGateway(config, logger = console) {
     ensureDevice(deviceId);
     await ensureConnected();
     const topics = getTopics(config);
-    lastControlCommand = command;
+    lastControlCommand = {
+      ...command,
+      context: command.context ?? null,
+    };
     setState({ controlReply: null, lastMessageAt: new Date().toISOString() });
 
     const payload = {
@@ -290,7 +349,7 @@ export function createMqttGateway(config, logger = console) {
       valveCtl: {
         valveChanel: command.stationIndex,
         type: command.type,
-        time: command.durationSeconds,
+        time: normalizeDurationSeconds(command.durationSeconds, command.type === 'on' ? 60 : 1),
       },
     };
     mqttClient.publish(topics.deviceControlPublish, JSON.stringify(payload));

@@ -8,7 +8,7 @@ import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { fetchFieldsFromSupabase } from '../../lib/fieldService';
 import { fetchDevicesFromSupabase, seedDevicesInSupabase } from '../../lib/deviceService';
 import { getWifiDemoAppDevice } from '../../lib/wifiDemoConfig';
-import { fetchPlansFromSupabase } from '../../lib/planService';
+import { fetchPlansFromSupabase, subscribeRunRealtime } from '../../lib/planService';
 
 interface AppUser {
   id: string;
@@ -226,6 +226,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 5000);
 
     return () => window.clearInterval(timer);
+  }, [isAuthenticated, user?.id]);
+
+  useEffect(() => {
+    if (!supabase || !isAuthenticated) {
+      return;
+    }
+    const unsubscribe = subscribeRunRealtime(() => {
+      void refreshPlans();
+      void refreshFields();
+      void refreshDevices();
+    });
+    return () => {
+      unsubscribe();
+    };
   }, [isAuthenticated, user?.id]);
 
   const login = async (username: string, password: string) => {
