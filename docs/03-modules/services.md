@@ -13,7 +13,7 @@
 ## 当前能力
 
 - 小程序登录、会话和业务读取。
-- 计划创建、更新、启动、停止。
+- Web / 小程序共享的计划创建、读取、更新、删除、启动、停止。
 - 计划执行 run/step 事件驱动状态机（`event_driven` 引擎）。
 - 演示设备控制转发。
 - 设备命令与设备事件落库（`device_commands` / `device_events`）。
@@ -28,6 +28,14 @@
 - `POST /internal/steps/:stepId/timeout`：step 超时任务回调入口。
 
 以上接口由 `x-internal-token` 保护，不对端侧开放。
+
+当前计划调度相关事实：
+
+- `execution-service /web/auth/exchange` 接受 Web 侧 Supabase access token，并签发 execution session。
+- `execution-service /mini/plans*` 是灌溉计划的统一服务端写入口。
+- `POST/PATCH /mini/plans` 成功后会触发 `syncPlanSchedule(...)`。
+- `DELETE /mini/plans/:id`、停用或切为 `manual` 时会触发 `unsyncPlanSchedule(...)` 或重建对应 cron。
+- 调度任务最终由 Supabase `pg_cron + pg_net` 回调 `POST /internal/plans/:planId/dispatch`。
 
 双轨切流策略：
 
@@ -50,4 +58,4 @@
 - 计划执行和设备命令必须可追溯。
 - 外部上游错误必须统一转换和记录。
 - Cron 生命周期统一治理：计划创建/更新触发 `sync_plan_schedule_job`，停用/切换为 manual/删除触发 `unsync_plan_schedule_job` 或孤儿清理任务。
-
+- 生产回调地址必须使用 Supabase `pg_net` 可达的 HTTPS 域名，避免使用裸 IP `http://...` 导致握手超时。

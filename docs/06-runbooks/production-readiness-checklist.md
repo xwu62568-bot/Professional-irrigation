@@ -44,10 +44,12 @@
 
 - [ ] **推送数据库变更**：执行 `supabase db push`，确认包含最新时区调度修复 migration。
 - [ ] **设置正式回调地址**：`EXECUTION_INTERNAL_API_BASE_URL` 指向公网可达的 execution-service 域名，不可使用本地 `127.0.0.1` 或临时隧道地址。
+- [ ] **设置正式回调地址**：`EXECUTION_INTERNAL_API_BASE_URL` 指向 Supabase `pg_net` 可达的 HTTPS 域名，不可使用本地 `127.0.0.1`、临时隧道或裸 IP `http://<server-ip>/...`。
 - [ ] **校验内部鉴权一致性**：`EXECUTION_INTERNAL_TOKEN` 与 `EXECUTION_EVENT_CALLBACK_TOKEN` 一致；`EXECUTION_ACK_SIGNATURE_SECRET` 在 execution/gateway 两侧一致。
 - [ ] **重同步所有 auto 计划 cron**：在 `services/execution-service` 执行 `npm run ops:resync-auto-plans`，避免“计划已改但 cron 未更新”。
 - [ ] **发布后 smoke**：验证 `GET /health`、手动执行一次、自动计划一次（2~3 分钟后触发）均成功。
+- [ ] **前后端分链发布核对**：若本次改动涉及 `web-dev`，确认 GitHub Pages workflow 已发布；`./deploy/deploy-ecs.sh` 不会更新 Web 静态站点。
+- [ ] **环境变量生效方式核对**：若修改了 `services/.env.production`，使用 `docker compose up -d --force-recreate <service>` 重新创建容器，不要只执行 `restart`。
 - [ ] **核验执行收敛**：`plan_runs` 和 `plan_run_steps` 最新记录为 `success`，`device_commands` 的 `open/close` 都为 `acked`。
 - [ ] **清理测试残留**：取消历史卡死 `running` 的 run，恢复测试计划到业务时间，关闭临时隧道。
 - [ ] **回滚预案就绪**：确认可切回 `EXECUTION_ENGINE_MODE=legacy` 或 `shadow`，并保留故障窗口日志用于复盘。
-

@@ -29,8 +29,7 @@
 - 设计服务端业务 API。
 - Web 写操作逐步迁移。
 - 共享 DTO 和契约测试。
-
-**当前优先项（已写实施说明）**：[Web 计划 CRUD 统一到 `/mini/plans`](web-plan-api-unification.md) — 解决 Web 改计划时间后 `pg_cron` 不同步问题。
+- 已完成：灌溉计划 CRUD 与启动入口已统一到 `execution-service /mini/plans*`，Web 改计划时间会同步更新 `plan_schedule_jobs`。
 
 ## 阶段 3：设备链路生产化
 
@@ -51,4 +50,3 @@
 - 项目/组织/角色权限。
 - 审计日志、告警、监控。
 - 发布、回滚、备份和恢复流程。
-

@@ -4,7 +4,7 @@
 
 | 调用方 | 当前边界 | 目标边界 |
 | --- | --- | --- |
-| Web | Supabase 直连 + 少量服务端接口 | 业务写操作收敛到服务端 API |
+| Web | Supabase Auth + 部分 Supabase 直连 + 服务端计划接口 | 全部业务写操作收敛到服务端 API |
 | 小程序 | 统一走 `execution-service /mini/*` | 保持统一 API 网关 |
 | MCP | 复用 mini API | 复用安全受控平台 API |
 
@@ -29,5 +29,5 @@
 
 - 小程序 API 以 `packages/irrigation-api` 为契约。
 - 服务端内部 REST 调 Supabase 不直接暴露给端侧。
+- Web 计划相关写操作统一通过 `POST /web/auth/exchange` + `/mini/plans*` 完成，不再直接改 `irrigation_plans` / `irrigation_plan_zones`。
 - AI 和 MQTT 上游错误要转换为业务可理解错误，不泄露密钥和敏感配置。
-

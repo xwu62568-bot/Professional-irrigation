@@ -480,8 +480,8 @@ Web 端：
 
 计划配置：
 
-- Web 端通过 `planService` 直接 CRUD Supabase。
-- 小程序通过 `/mini/plans` 创建/更新计划。
+- Web 端通过 `POST /web/auth/exchange` 换取 execution token 后，调用 `/mini/plans*` 完成计划 create/update/delete/start。
+- 小程序通过 `/mini/plans*` 创建/更新/启动计划。
 - 计划包含周期、开始时间、模式、执行模式、雨锁、目标水量、分区顺序和分区时长。
 
 计划执行：
@@ -1125,9 +1125,9 @@ Web 计划 CRUD：
 ```text
 IrrigationPlan.tsx
   -> planService.fetchPlansFromSupabase()
-  -> createPlanInSupabase()
-  -> updatePlanInSupabase()
-  -> deletePlanInSupabase()
+  -> createPlanViaExecutionApi()
+  -> updatePlanViaExecutionApi()
+  -> deletePlanViaExecutionApi()
 ```
 
 小程序计划创建/编辑：

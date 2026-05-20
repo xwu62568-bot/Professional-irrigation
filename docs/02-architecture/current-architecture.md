@@ -5,7 +5,8 @@
 ```text
 web-dev
   -> Supabase Auth / REST
-  -> execution-service /runs
+  -> execution-service /web/auth/exchange
+  -> execution-service /mini/plans*
   -> mqtt-gateway-service /demo/*
   -> 高德地图 / Open-Meteo
 
@@ -30,7 +31,7 @@ mcp-server
 ## 当前关键事实
 
 - `web-dev` 是当前主要 Web 工程，`web` 更像旧导出/待明确工程。
-- Web 登录和部分业务 CRUD 直接使用 Supabase JS。
+- Web 登录使用 Supabase Auth；灌溉计划 CRUD 与启动已改走 `execution-service`，通过 `/web/auth/exchange` 换取 execution token 后调用 `/mini/plans*`。
 - 小程序不直连 Supabase，统一走 `execution-service /mini/*`。
 - `execution-service` 使用 Supabase service role 访问数据库。
 - `assistant-service` 负责 Dify API key 隔离和流式转发。
@@ -41,9 +42,8 @@ mcp-server
 
 ## 当前风险
 
-- Web 与小程序存在双业务写入路径。
+- Web 仍保留部分 Supabase 直连写路径，尚未完全与小程序统一；灌溉计划写路径已收敛到服务端。
 - 设备实时状态未统一落库。
 - 策略链路未闭环。
 - 权限模型仍按单用户所有权设计。
 - 测试覆盖不足，计划执行和 MQTT 失败路径风险高。
-

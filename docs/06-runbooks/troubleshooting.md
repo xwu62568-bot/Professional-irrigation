@@ -21,6 +21,24 @@
 - 查 `execution-service /health` 中 `runtimeMetrics`：`dispatchFailed`、`ackFailure`、`rollbackTriggered`。
 - 若处于 canary，检查失败率是否触发自动回滚阈值（`EXECUTION_ROLLOUT_*`）。
 
+### 自动计划到点未触发
+
+- 先查 `irrigation_plans.start_at`、`mode`、`enabled`、`updated_at`。
+- 再查 `plan_schedule_jobs.cron_expression`、`next_run_at`、`updated_at`。
+- 若计划表时间已变但 `plan_schedule_jobs` 未更新：
+  - 确认本次保存是否走了 `execution-service /mini/plans*`。
+  - 确认线上 Web 是否已发布到 GitHub Pages；ECS 部署不会更新 `web-dev`。
+  - 必要时执行 `resync-auto-plan-jobs`。
+- 若 `plan_schedule_jobs` 已更新但到点仍未触发：
+  - 查 `cron.job` 与 `cron.job_run_details`，确认 `pg_cron` 是否执行。
+  - 查 `net._http_response`，确认 `pg_net` 是否超时、握手失败或返回非 `202`。
+  - 查 `nginx` access log，确认 `/api/execution/internal/plans/:id/dispatch` 是否真正收到请求。
+  - 手动调用 `/api/execution/internal/plans/:id/dispatch` 验证 `execution-service` 本体是否能起跑。
+- 若 `net._http_response` 显示 TCP/SSL handshake 超时：
+  - 检查 `EXECUTION_INTERNAL_API_BASE_URL` 是否仍指向裸 IP 的 `http://...`。
+  - 生产应改为 Supabase `pg_net` 可达的 HTTPS 域名。
+  - 修改 `.env.production` 后需要 `docker compose up -d --force-recreate execution-service`，再重跑 `resync-auto-plan-jobs`。
+
 ### 执行链路 SLI/SLO 与告警阈值
 
 - `dispatch_success_rate`（5 分钟窗口）目标 >= `99%`，低于 `97%` 连续 3 个窗口触发 P1 告警。
@@ -68,4 +86,3 @@
 - 判断 Web 是否直接写 Supabase，小程序是否走 Node API。
 - 对比 `web-dev/src/lib/*Service.ts` 和 `services/execution-service/src/mini-service.mjs`。
 - 对比共享类型是否同步。
-
