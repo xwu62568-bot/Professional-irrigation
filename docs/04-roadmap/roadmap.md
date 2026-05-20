@@ -30,6 +30,8 @@
 - Web 写操作逐步迁移。
 - 共享 DTO 和契约测试。
 
+**当前优先项（已写实施说明）**：[Web 计划 CRUD 统一到 `/mini/plans`](web-plan-api-unification.md) — 解决 Web 改计划时间后 `pg_cron` 不同步问题。
+
 ## 阶段 3：设备链路生产化
 
 目标：从固定演示设备升级为正式设备接入能力。

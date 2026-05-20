@@ -5,7 +5,13 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Plan, PlanZone } from '../data/mockData';
-import { createPlanInSupabase, deletePlanInSupabase, updatePlanInSupabase } from '../../lib/planService';
+import {
+  createPlanViaExecutionApi,
+  deletePlanViaExecutionApi,
+  formatPlanSaveError,
+  startPlanViaExecutionApi,
+  updatePlanViaExecutionApi,
+} from '../../lib/planService';
 
 type CycleType = 'daily' | 'weekly' | 'interval';
 type ExecMode = 'duration' | 'quantity';
@@ -65,7 +71,6 @@ export function IrrigationPlan() {
   const [isExecuting, setIsExecuting] = useState(false);
 
   const selectedField = fields.find(f => f.id === form.fieldId);
-  const executionServiceUrl = import.meta.env.VITE_EXECUTION_SERVICE_URL?.trim() || '';
 
   const openCreate = () => {
     setForm(defaultForm());
@@ -153,9 +158,9 @@ export function IrrigationPlan() {
       setIsSaving(true);
       if (authMode === 'supabase' && user) {
         if (editingId) {
-          await updatePlanInSupabase({ planId: editingId, fields, plan: planData });
+          await updatePlanViaExecutionApi(editingId, planData);
         } else {
-          await createPlanInSupabase({ userId: user.id, fields, plan: planData });
+          await createPlanViaExecutionApi(planData);
         }
         await refreshPlans();
       } else if (editingId) {
@@ -165,7 +170,7 @@ export function IrrigationPlan() {
       }
       setShowForm(false);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : '保存计划失败');
+      setFormError(formatPlanSaveError(error));
     } finally {
       setIsSaving(false);
     }
@@ -177,7 +182,7 @@ export function IrrigationPlan() {
     try {
       setIsDeleting(true);
       if (authMode === 'supabase') {
-        await deletePlanInSupabase(id);
+        await deletePlanViaExecutionApi(id);
         await refreshPlans();
       } else {
         setPlans(prev => prev.filter(p => p.id !== id));
@@ -202,13 +207,13 @@ export function IrrigationPlan() {
     try {
       if (authMode === 'supabase') {
         const { id: _ignored, ...planPayload } = next;
-        await updatePlanInSupabase({ planId: id, fields, plan: planPayload });
+        await updatePlanViaExecutionApi(id, planPayload);
         await refreshPlans();
       } else {
         setPlans(prev => prev.map(p => p.id === id ? next : p));
       }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '更新计划失败');
+      setActionError(formatPlanSaveError(error));
     }
   };
 
@@ -245,24 +250,11 @@ export function IrrigationPlan() {
     setActionError(null);
     setActionNotice(null);
 
-    if (!executionServiceUrl) {
-      setActionError('未配置执行服务地址，请先在 .env 中填写 VITE_EXECUTION_SERVICE_URL。');
-      return;
-    }
-
     try {
       setIsExecuting(true);
-      const response = await fetch(`${executionServiceUrl}/runs/manual-start`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ planId }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || '启动执行失败');
-      }
+      const data = await startPlanViaExecutionApi(planId);
       setExecuteConfirm(null);
-      setActionNotice(`计划已提交执行，runId: ${data.runId}`);
+      setActionNotice(data.runId ? `计划已提交执行，runId: ${data.runId}` : (data.message ?? '计划已提交执行'));
     } catch (error) {
       setActionError(error instanceof Error ? error.message : '启动执行失败');
     } finally {

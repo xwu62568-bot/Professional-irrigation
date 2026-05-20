@@ -110,6 +110,13 @@ export async function updateIrrigationPlan(config, planId, payload) {
   return rows?.[0] ?? null;
 }
 
+export async function deleteIrrigationPlan(config, planId) {
+  await request(config, `irrigation_plans?id=eq.${encodeURIComponent(planId)}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+  });
+}
+
 export async function deletePlanZonesForPlan(config, planId) {
   await request(config, `irrigation_plan_zones?plan_id=eq.${encodeURIComponent(planId)}`, {
     method: 'DELETE',

@@ -62,6 +62,54 @@ function deriveDisplayName(email) {
   return localPart || '用户';
 }
 
+async function fetchSupabaseUserFromAccessToken(config, accessToken) {
+  const token = String(accessToken ?? '').trim();
+  if (!token) {
+    throw new AuthServiceError('AUTH_MISSING_TOKEN', '缺少 Supabase access token', 400);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.authUpstreamTimeoutMs);
+
+  try {
+    const response = await fetch(`${config.supabaseUrl}/auth/v1/user`, {
+      method: 'GET',
+      headers: {
+        apikey: config.supabaseAnonKey,
+        authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload?.msg || payload?.error_description || payload?.error || '无效 token';
+      throw new AuthServiceError('AUTH_INVALID_TOKEN', message, 401);
+    }
+
+    if (!payload?.id) {
+      throw new AuthServiceError('AUTH_INVALID_TOKEN', '无效 token', 401);
+    }
+
+    return {
+      id: payload.id,
+      email: payload.email ?? '',
+      name: payload.user_metadata?.name ?? deriveDisplayName(payload.email),
+      role: payload.user_metadata?.role ?? 'operator',
+    };
+  } catch (error) {
+    if (error instanceof AuthServiceError) {
+      throw error;
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new AuthServiceError('AUTH_UPSTREAM_TIMEOUT', '认证服务响应超时，请稍后重试', 504);
+    }
+    throw new AuthServiceError('AUTH_UPSTREAM_UNAVAILABLE', '认证服务暂时不可用，请稍后重试', 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function createMiniAuthService(config) {
   async function createSession(user) {
     const token = crypto.randomUUID();
@@ -157,6 +205,11 @@ export function createMiniAuthService(config) {
         await deleteMiniSessionByToken(config, token).catch(() => undefined);
       }
       return { success: true };
+    },
+
+    async exchangeSupabaseToken(accessToken) {
+      const user = await fetchSupabaseUserFromAccessToken(config, accessToken);
+      return createSession(user);
     },
 
     getSession,

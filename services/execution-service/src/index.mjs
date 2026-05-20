@@ -10,6 +10,14 @@ const runService = createRunService(config);
 const miniService = createMiniService(config);
 const app = createApp({ ...config, authService, runService, miniService });
 
+if (!config.internalAuthToken) {
+  console.warn('[execution-service] EXECUTION_INTERNAL_TOKEN is empty; plan cron sync is disabled');
+}
+
+if (!process.env.EXECUTION_INTERNAL_API_BASE_URL) {
+  console.warn('[execution-service] EXECUTION_INTERNAL_API_BASE_URL is not set; defaulting to local listener URL');
+}
+
 runService.startScheduler();
 
 process.on('SIGINT', () => {

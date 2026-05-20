@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 function corsHeaders(req) {
   return {
     'access-control-allow-origin': req.headers.origin ?? '*',
-    'access-control-allow-methods': 'GET,POST,PATCH,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     'access-control-max-age': '86400',
   };
@@ -31,6 +31,40 @@ function errorBody(error, fallbackMessage) {
     error: error instanceof Error ? error.message : fallbackMessage,
     code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
   };
+}
+
+function planMutationStatus(error) {
+  if (error && typeof error === 'object' && error.code === 'SCHEDULE_SYNC_FAILED') {
+    return 502;
+  }
+  if (error && typeof error === 'object' && 'statusCode' in error && Number(error.statusCode) >= 400) {
+    return Number(error.statusCode);
+  }
+  return 400;
+}
+
+function parseSupabaseAccessToken(req, body) {
+  if (body && typeof body.supabaseAccessToken === 'string' && body.supabaseAccessToken.trim()) {
+    return body.supabaseAccessToken.trim();
+  }
+  const header = req.headers.authorization ?? '';
+  if (header.startsWith('Bearer ')) {
+    return header.slice(7).trim();
+  }
+  return '';
+}
+
+function withCode(error, code, fallbackMessage) {
+  const wrapped = new Error(
+    error instanceof Error && error.message ? error.message : fallbackMessage,
+  );
+  wrapped.code = code;
+  if (error instanceof Error && error.cause) {
+    wrapped.cause = error.cause;
+  } else if (error) {
+    wrapped.cause = error;
+  }
+  return wrapped;
 }
 
 async function readJson(req) {
@@ -135,6 +169,71 @@ async function proxyAssistantMessage(req, res, config) {
   res.end();
 }
 
+export function buildHealthPayload(config, runService) {
+  return {
+    ok: true,
+    service: config.serviceName,
+    mqttGatewayBaseUrl: config.mqttGatewayBaseUrl,
+    miniApi: true,
+    engineMode: config.engineMode,
+    rolloutMode: config.rolloutMode,
+    internalScheduling: {
+      internalTokenConfigured: Boolean(config.internalAuthToken),
+      internalApiBaseUrl: config.internalApiBaseUrl,
+      projectTimezone: config.projectTimezone,
+    },
+    runtimeMetrics: runService.getRuntimeMetrics?.() ?? null,
+  };
+}
+
+export async function createPlanWithScheduleSync({ miniService, runService, userId, body }) {
+  const result = await miniService.createPlan(userId, body);
+  try {
+    await runService.syncPlanSchedule(result.id);
+    return result;
+  } catch (syncError) {
+    try {
+      await miniService.rollbackCreatedPlan(userId, result.id);
+    } catch (rollbackError) {
+      const wrapped = withCode(
+        rollbackError,
+        'PLAN_CREATE_ROLLBACK_FAILED',
+        '计划调度同步失败，且创建回滚失败',
+      );
+      wrapped.cause = { syncError, rollbackError };
+      throw wrapped;
+    }
+    throw syncError;
+  }
+}
+
+export async function updatePlanWithScheduleSync({ miniService, runService, userId, planId, body }) {
+  const result = await miniService.updatePlan(userId, planId, body);
+  await runService.syncPlanSchedule(result.id);
+  return result;
+}
+
+export async function deletePlanWithScheduleUnsync({ miniService, runService, userId, planId }) {
+  await miniService.assertPlanOwner(userId, planId);
+  await runService.unsyncPlanSchedule(planId);
+  try {
+    return await miniService.deletePlan(userId, planId);
+  } catch (deleteError) {
+    try {
+      await runService.syncPlanSchedule(planId);
+    } catch (restoreError) {
+      const wrapped = withCode(
+        restoreError,
+        'PLAN_DELETE_RESTORE_FAILED',
+        '计划删除失败，且调度恢复失败',
+      );
+      wrapped.cause = { deleteError, restoreError };
+      throw wrapped;
+    }
+    throw deleteError;
+  }
+}
+
 export function createApp(config) {
   const runService = config.runService;
   const miniService = config.miniService;
@@ -155,15 +254,7 @@ export function createApp(config) {
       }
 
       if (req.method === 'GET' && url.pathname === '/health') {
-        return json(req, res, 200, {
-          ok: true,
-          service: config.serviceName,
-          mqttGatewayBaseUrl: config.mqttGatewayBaseUrl,
-          miniApi: true,
-          engineMode: config.engineMode,
-          rolloutMode: config.rolloutMode,
-          runtimeMetrics: runService.getRuntimeMetrics?.() ?? null,
-        });
+        return json(req, res, 200, buildHealthPayload(config, runService));
       }
 
       if (req.method === 'POST' && url.pathname.startsWith('/internal/')) {
@@ -238,6 +329,26 @@ export function createApp(config) {
             ? Number(error.statusCode) || 401
             : 401;
           return json(req, res, statusCode, errorBody(error, '登录失败'));
+        }
+      }
+
+      if (req.method === 'POST' && url.pathname === '/web/auth/exchange') {
+        try {
+          const body = await readJson(req);
+          const supabaseAccessToken = parseSupabaseAccessToken(req, body);
+          const session = await authService.exchangeSupabaseToken(supabaseAccessToken);
+          return json(req, res, 200, {
+            data: {
+              accessToken: session.token,
+              expiresAt: session.expiresAt,
+              user: session.user,
+            },
+          });
+        } catch (error) {
+          const statusCode = error && typeof error === 'object' && 'statusCode' in error
+            ? Number(error.statusCode) || 401
+            : 401;
+          return json(req, res, statusCode, errorBody(error, '认证失败'));
         }
       }
 
@@ -403,23 +514,55 @@ export function createApp(config) {
         if (req.method === 'POST' && url.pathname === '/mini/plans') {
           try {
             const body = await readJson(req);
-            const result = await miniService.createPlan(session.user.id, body);
-            await runService.syncPlanSchedule(result.id);
+            const result = await createPlanWithScheduleSync({
+              miniService,
+              runService,
+              userId: session.user.id,
+              body,
+            });
             return json(req, res, 201, { data: result });
           } catch (error) {
-            return json(req, res, 400, { error: error instanceof Error ? error.message : '计划创建失败' });
+            return json(req, res, planMutationStatus(error), errorBody(error, '计划创建失败'));
           }
         }
 
         if (req.method === 'PATCH' && url.pathname.startsWith('/mini/plans/')) {
-          const planId = url.pathname.split('/')[3] ?? '';
+          const segments = url.pathname.split('/').filter(Boolean);
+          if (segments.length !== 3 || segments[0] !== 'mini' || segments[1] !== 'plans') {
+            return notFound(req, res);
+          }
+          const planId = segments[2] ?? '';
           try {
             const body = await readJson(req);
-            const result = await miniService.updatePlan(session.user.id, planId, body);
-            await runService.syncPlanSchedule(result.id);
+            const result = await updatePlanWithScheduleSync({
+              miniService,
+              runService,
+              userId: session.user.id,
+              planId,
+              body,
+            });
             return json(req, res, 200, { data: result });
           } catch (error) {
-            return json(req, res, 400, { error: error instanceof Error ? error.message : '计划更新失败' });
+            return json(req, res, planMutationStatus(error), errorBody(error, '计划更新失败'));
+          }
+        }
+
+        if (req.method === 'DELETE' && url.pathname.startsWith('/mini/plans/')) {
+          const segments = url.pathname.split('/').filter(Boolean);
+          if (segments.length !== 3 || segments[0] !== 'mini' || segments[1] !== 'plans') {
+            return notFound(req, res);
+          }
+          const planId = segments[2] ?? '';
+          try {
+            const result = await deletePlanWithScheduleUnsync({
+              miniService,
+              runService,
+              userId: session.user.id,
+              planId,
+            });
+            return json(req, res, 200, { data: result });
+          } catch (error) {
+            return json(req, res, planMutationStatus(error), errorBody(error, '计划删除失败'));
           }
         }
 

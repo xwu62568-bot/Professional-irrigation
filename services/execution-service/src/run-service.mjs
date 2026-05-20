@@ -30,7 +30,9 @@ import {
   updatePlanRun,
   updatePlanRunStep,
   upsertPlanScheduleJob,
+  removePlanScheduleJob,
 } from './supabase-rest.mjs';
+import { ScheduleSyncError } from './schedule-sync-error.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -184,18 +186,42 @@ export function createRunService(config, logger = console) {
     logger.warn('[execution-service] slo breach detected', snapshot);
   }
 
-  async function syncPlanSchedule(planId) {
+  async function syncPlanSchedule(planId, options = {}) {
+    const strict = options.strict !== false;
     if (!config.internalApiBaseUrl || !config.internalAuthToken) {
+      const message = 'Execution schedule sync is not configured';
+      if (strict) {
+        throw new ScheduleSyncError(message);
+      }
+      logger.error('[execution-service] sync plan schedule skipped', { planId, message });
       return;
     }
-    await upsertPlanScheduleJob(config, {
-      planId,
-      apiBaseUrl: config.internalApiBaseUrl,
-      authToken: config.internalAuthToken,
-      timezone: config.projectTimezone,
-    }).catch((error) => {
-      logger.error('[execution-service] sync plan schedule failed', { planId, error: error?.message ?? error });
-    });
+    try {
+      await upsertPlanScheduleJob(config, {
+        planId,
+        apiBaseUrl: config.internalApiBaseUrl,
+        authToken: config.internalAuthToken,
+        timezone: config.projectTimezone,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (strict) {
+        throw new ScheduleSyncError(message, { cause: error });
+      }
+      logger.error('[execution-service] sync plan schedule failed', { planId, error: message });
+    }
+  }
+
+  async function unsyncPlanSchedule(planId) {
+    if (!config.internalApiBaseUrl || !config.internalAuthToken) {
+      throw new ScheduleSyncError('Execution schedule sync is not configured');
+    }
+    try {
+      await removePlanScheduleJob(config, planId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ScheduleSyncError(message, { cause: error });
+    }
   }
 
   async function syncAllPlanSchedules() {
@@ -203,7 +229,7 @@ export function createRunService(config, logger = console) {
       return;
     }
     const plans = await fetchSchedulablePlans(config).catch(() => []);
-    await Promise.all(plans.map((plan) => syncPlanSchedule(plan.id)));
+    await Promise.all(plans.map((plan) => syncPlanSchedule(plan.id, { strict: false })));
   }
 
   async function queueCommand({
@@ -613,7 +639,7 @@ export function createRunService(config, logger = console) {
 
   async function startManualRun(planId) {
     const run = await startRun(planId, 'manual');
-    await syncPlanSchedule(planId);
+    await syncPlanSchedule(planId, { strict: false });
     return run;
   }
 
@@ -830,6 +856,7 @@ export function createRunService(config, logger = console) {
     handleGatewayAckEvent,
     handleStepTimeout,
     syncPlanSchedule,
+    unsyncPlanSchedule,
     syncAllPlanSchedules,
     startScheduler,
     stopScheduler,

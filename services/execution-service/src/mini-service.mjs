@@ -1,6 +1,8 @@
 import {
   createIrrigationPlan,
+  deleteIrrigationPlan,
   deletePlanZonesForPlan,
+  fetchPlan,
   insertPlanZones,
   updateIrrigationPlan,
 } from './supabase-rest.mjs';
@@ -878,6 +880,31 @@ export function createMiniService(config) {
         );
       }
 
+      return { id: planId };
+    },
+
+    async assertPlanOwner(userId, planId) {
+      const row = await fetchPlan(config, planId);
+      if (!row) {
+        throw new Error('计划不存在');
+      }
+      if (row.user_id !== userId) {
+        throw new Error('无权操作该计划');
+      }
+      return row;
+    },
+
+    async rollbackCreatedPlan(userId, planId) {
+      await this.assertPlanOwner(userId, planId);
+      await deletePlanZonesForPlan(config, planId);
+      await deleteIrrigationPlan(config, planId);
+      return { id: planId };
+    },
+
+    async deletePlan(userId, planId) {
+      await this.assertPlanOwner(userId, planId);
+      await deletePlanZonesForPlan(config, planId);
+      await deleteIrrigationPlan(config, planId);
       return { id: planId };
     },
 

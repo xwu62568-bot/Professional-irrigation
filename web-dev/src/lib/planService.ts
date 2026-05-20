@@ -1,4 +1,5 @@
-import type { Field, Plan, PlanZone } from '../app/data/mockData';
+import type { Plan, PlanZone } from '../app/data/mockData';
+import { executionFetch } from './executionAuth';
 import { supabase } from './supabase';
 
 type PlanRow = {
@@ -58,27 +59,12 @@ function toPlanMode(mode: PlanRow['mode']): Plan['mode'] {
   return mode;
 }
 
-function toDbPlanMode(mode: Plan['mode']): PlanRow['mode'] {
-  if (mode === 'confirm') {
-    return 'semi_auto';
-  }
-  return mode;
-}
-
 function toExecutionMode(mode: PlanRow['execution_mode']): Plan['executionMode'] {
   return mode === 'quota' ? 'quantity' : 'duration';
 }
 
-function toDbExecutionMode(mode: Plan['executionMode']): PlanRow['execution_mode'] {
-  return mode === 'quantity' ? 'quota' : 'duration';
-}
-
 function toRainPolicy(skipIfRain: boolean): Plan['rainPolicy'] {
   return skipIfRain ? 'skip' : 'continue';
-}
-
-function toSkipIfRain(policy: Plan['rainPolicy']) {
-  return policy === 'skip';
 }
 
 function toPlan(row: PlanRow, zones: PlanZoneRow[]): Plan {
@@ -114,30 +100,88 @@ function toPlan(row: PlanRow, zones: PlanZoneRow[]): Plan {
   };
 }
 
-function resolvePlanZoneRows(fields: Field[], planZones: PlanZone[]) {
-  const zoneMetaById = new Map(
-    fields.flatMap((field) => field.zones.map((zone) => [zone.id, zone] as const)),
-  );
+type MiniPlanCreateInput = {
+  name: string;
+  fieldId: string;
+  mode: Plan['mode'];
+  cycle: Plan['cycle'];
+  cycleValue?: number | number[];
+  startTime: string;
+  executionMode: Plan['executionMode'];
+  rainPolicy: Plan['rainPolicy'];
+  enabled: boolean;
+  zones: Array<{ zoneId: string; order: number; duration: number; enabled: boolean }>;
+  targetWater?: number;
+  irrigationEfficiencyRate?: number;
+  maxDurationPerZone?: number;
+  allowSplit?: boolean;
+};
 
-  return planZones.map((zone) => {
-    const zoneMeta = zoneMetaById.get(zone.zoneId);
-    if (!zoneMeta) {
-      throw new Error(`计划分区 ${zone.zoneId} 不存在，请重新选择地块分区后再保存。`);
-    }
+function toMiniPlanInput(plan: Omit<Plan, 'id'>): MiniPlanCreateInput {
+  const rainPolicy = plan.rainPolicy === 'delay' ? 'continue' : plan.rainPolicy;
+  const cycleValue = plan.cycle === 'weekly'
+    ? (Array.isArray(plan.cycleValue) ? plan.cycleValue : [])
+    : plan.cycle === 'interval'
+      ? Number(plan.cycleValue ?? 1)
+      : undefined;
 
-    const parsedSiteNumber = Number.parseInt(String(zoneMeta.stationNo).replace(/\D+/g, ''), 10);
-    if (!Number.isFinite(parsedSiteNumber)) {
-      throw new Error(`分区 ${zoneMeta.name} 缺少有效站点号，无法保存计划。`);
-    }
-
-    return {
-      zone_id: zone.zoneId,
-      zone_name: zoneMeta.name,
-      site_number: parsedSiteNumber,
-      sort_order: zone.order,
-      duration_minutes: zone.duration,
+  return {
+    name: plan.name,
+    fieldId: plan.fieldId,
+    mode: plan.mode,
+    cycle: plan.cycle,
+    cycleValue,
+    startTime: plan.startTime,
+    executionMode: plan.executionMode,
+    rainPolicy,
+    enabled: plan.enabled,
+    zones: plan.zones.map((zone) => ({
+      zoneId: zone.zoneId,
+      order: zone.order,
+      duration: zone.duration,
       enabled: zone.enabled,
-    };
+    })),
+    targetWater: plan.executionMode === 'quantity' ? plan.targetWater : undefined,
+    irrigationEfficiencyRate: plan.executionMode === 'quantity' ? plan.irrigationEfficiencyRate : undefined,
+    maxDurationPerZone: plan.executionMode === 'quantity' ? plan.maxDurationPerZone : undefined,
+    allowSplit: plan.executionMode === 'quantity' ? plan.allowSplit : undefined,
+  };
+}
+
+export function formatPlanSaveError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'SCHEDULE_SYNC_FAILED') {
+    return '计划已保存到数据库，但调度同步失败，请重试保存';
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return '保存计划失败';
+}
+
+export async function createPlanViaExecutionApi(plan: Omit<Plan, 'id'>) {
+  return executionFetch<{ id: string }>('/mini/plans', {
+    method: 'POST',
+    body: JSON.stringify(toMiniPlanInput(plan)),
+  });
+}
+
+export async function updatePlanViaExecutionApi(planId: string, plan: Omit<Plan, 'id'>) {
+  return executionFetch<{ id: string }>(`/mini/plans/${planId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(toMiniPlanInput(plan)),
+  });
+}
+
+export async function deletePlanViaExecutionApi(planId: string) {
+  return executionFetch<{ id: string }>(`/mini/plans/${planId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function startPlanViaExecutionApi(planId: string) {
+  return executionFetch<{ success: boolean; runId?: string; message?: string }>(`/mini/plans/${planId}/start`, {
+    method: 'POST',
+    body: JSON.stringify({}),
   });
 }
 
@@ -181,142 +225,6 @@ export async function fetchPlansFromSupabase() {
   });
 
   return plans.map((plan) => toPlan(plan, zonesByPlanId.get(plan.id) ?? []));
-}
-
-export async function createPlanInSupabase(input: {
-  userId: string;
-  fields: Field[];
-  plan: Omit<Plan, 'id'>;
-}) {
-  if (!supabase) {
-    throw new Error('Supabase 未配置');
-  }
-
-  const planZoneRows = resolvePlanZoneRows(input.fields, input.plan.zones);
-
-  const { data, error } = await supabase
-    .from('irrigation_plans')
-    .insert({
-      user_id: input.userId,
-      field_id: input.plan.fieldId,
-      name: input.plan.name,
-      schedule_type: input.plan.cycle,
-      weekdays: input.plan.cycle === 'weekly' ? (Array.isArray(input.plan.cycleValue) ? input.plan.cycleValue : []) : [],
-      interval_days: input.plan.cycle === 'interval' ? Number(input.plan.cycleValue ?? 1) : null,
-      start_at: input.plan.startTime,
-      enabled: input.plan.enabled,
-      skip_if_rain: toSkipIfRain(input.plan.rainPolicy),
-      mode: toDbPlanMode(input.plan.mode),
-      execution_mode: toDbExecutionMode(input.plan.executionMode),
-      target_water_m3_per_mu: input.plan.executionMode === 'quantity' ? input.plan.targetWater ?? null : null,
-      irrigation_efficiency: input.plan.executionMode === 'quantity' ? input.plan.irrigationEfficiencyRate ?? null : null,
-      max_duration_minutes: input.plan.executionMode === 'quantity' ? input.plan.maxDurationPerZone ?? null : null,
-      split_rounds: input.plan.executionMode === 'quantity' ? Boolean(input.plan.allowSplit) : false,
-    })
-    .select('id')
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  const { error: zonesError } = await supabase
-    .from('irrigation_plan_zones')
-    .insert(
-      planZoneRows.map((zone) => ({
-        plan_id: data.id,
-        zone_id: zone.zone_id,
-        zone_name: zone.zone_name,
-        site_number: zone.site_number,
-        sort_order: zone.sort_order,
-        duration_minutes: zone.duration_minutes,
-        enabled: zone.enabled,
-      })),
-    );
-
-  if (zonesError) {
-    throw zonesError;
-  }
-
-  return data;
-}
-
-export async function updatePlanInSupabase(input: {
-  planId: string;
-  fields: Field[];
-  plan: Omit<Plan, 'id'>;
-}) {
-  if (!supabase) {
-    throw new Error('Supabase 未配置');
-  }
-
-  const planZoneRows = resolvePlanZoneRows(input.fields, input.plan.zones);
-
-  const { error } = await supabase
-    .from('irrigation_plans')
-    .update({
-      field_id: input.plan.fieldId,
-      name: input.plan.name,
-      schedule_type: input.plan.cycle,
-      weekdays: input.plan.cycle === 'weekly' ? (Array.isArray(input.plan.cycleValue) ? input.plan.cycleValue : []) : [],
-      interval_days: input.plan.cycle === 'interval' ? Number(input.plan.cycleValue ?? 1) : null,
-      start_at: input.plan.startTime,
-      enabled: input.plan.enabled,
-      skip_if_rain: toSkipIfRain(input.plan.rainPolicy),
-      mode: toDbPlanMode(input.plan.mode),
-      execution_mode: toDbExecutionMode(input.plan.executionMode),
-      target_water_m3_per_mu: input.plan.executionMode === 'quantity' ? input.plan.targetWater ?? null : null,
-      irrigation_efficiency: input.plan.executionMode === 'quantity' ? input.plan.irrigationEfficiencyRate ?? null : null,
-      max_duration_minutes: input.plan.executionMode === 'quantity' ? input.plan.maxDurationPerZone ?? null : null,
-      split_rounds: input.plan.executionMode === 'quantity' ? Boolean(input.plan.allowSplit) : false,
-    })
-    .eq('id', input.planId);
-
-  if (error) {
-    throw error;
-  }
-
-  const { error: deleteError } = await supabase
-    .from('irrigation_plan_zones')
-    .delete()
-    .eq('plan_id', input.planId);
-
-  if (deleteError) {
-    throw deleteError;
-  }
-
-  const { error: zonesError } = await supabase
-    .from('irrigation_plan_zones')
-    .insert(
-      planZoneRows.map((zone) => ({
-        plan_id: input.planId,
-        zone_id: zone.zone_id,
-        zone_name: zone.zone_name,
-        site_number: zone.site_number,
-        sort_order: zone.sort_order,
-        duration_minutes: zone.duration_minutes,
-        enabled: zone.enabled,
-      })),
-    );
-
-  if (zonesError) {
-    throw zonesError;
-  }
-}
-
-export async function deletePlanInSupabase(planId: string) {
-  if (!supabase) {
-    throw new Error('Supabase 未配置');
-  }
-
-  const { error } = await supabase
-    .from('irrigation_plans')
-    .delete()
-    .eq('id', planId);
-
-  if (error) {
-    throw error;
-  }
 }
 
 export function subscribeRunRealtime(onChange: () => void) {

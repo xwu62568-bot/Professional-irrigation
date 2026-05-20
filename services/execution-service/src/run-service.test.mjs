@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createRunService,
   buildCommandIdempotencyKey,
   buildDedupeKey,
   evaluateRuntimeSlo,
@@ -86,4 +87,34 @@ test('shouldAutoRollbackFromRuns should return false when samples are insufficie
   });
   assert.equal(result.shouldRollback, false);
   assert.equal(result.reason, 'insufficient_samples');
+});
+
+test('syncPlanSchedule should throw when internal schedule sync is not configured', async () => {
+  const service = createRunService({
+    internalApiBaseUrl: '',
+    internalAuthToken: '',
+    reconcileEnabled: false,
+    engineMode: 'event_driven',
+    rolloutMode: 'full',
+  });
+
+  await assert.rejects(
+    () => service.syncPlanSchedule('plan-1'),
+    (error) => error && error.code === 'SCHEDULE_SYNC_FAILED',
+  );
+});
+
+test('unsyncPlanSchedule should throw when internal schedule sync is not configured', async () => {
+  const service = createRunService({
+    internalApiBaseUrl: '',
+    internalAuthToken: '',
+    reconcileEnabled: false,
+    engineMode: 'event_driven',
+    rolloutMode: 'full',
+  });
+
+  await assert.rejects(
+    () => service.unsyncPlanSchedule('plan-1'),
+    (error) => error && error.code === 'SCHEDULE_SYNC_FAILED',
+  );
 });

@@ -8,6 +8,7 @@ import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { fetchFieldsFromSupabase } from '../../lib/fieldService';
 import { fetchDevicesFromSupabase, seedDevicesInSupabase } from '../../lib/deviceService';
 import { getWifiDemoAppDevice } from '../../lib/wifiDemoConfig';
+import { clearExecutionSession, exchangeExecutionSession, logoutExecutionSession } from '../../lib/executionAuth';
 import { fetchPlansFromSupabase, subscribeRunRealtime } from '../../lib/planService';
 
 interface AppUser {
@@ -119,6 +120,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const session = data.session;
       setIsAuthenticated(Boolean(session));
       setUser(session ? deriveUser(session) : null);
+      if (session) {
+        void exchangeExecutionSession().catch((error) => {
+          console.error('Failed to exchange execution session:', error);
+        });
+      }
       setIsAuthReady(true);
     });
 
@@ -128,6 +134,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!isMounted) return;
       setIsAuthenticated(Boolean(session));
       setUser(session ? deriveUser(session) : null);
+      if (session) {
+        void exchangeExecutionSession().catch((error) => {
+          console.error('Failed to exchange execution session:', error);
+        });
+      } else {
+        clearExecutionSession();
+      }
       setIsAuthReady(true);
     });
 
@@ -259,11 +272,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: error.message };
     }
 
+    try {
+      await exchangeExecutionSession();
+    } catch (exchangeError) {
+      await supabase.auth.signOut();
+      return {
+        ok: false,
+        error: exchangeError instanceof Error ? exchangeError.message : '执行服务认证失败',
+      };
+    }
+
     return { ok: true };
   };
 
   const logout = async () => {
     if (supabase) {
+      await logoutExecutionSession().catch((error) => {
+        console.warn('Failed to revoke execution session during logout:', error);
+      });
       await supabase.auth.signOut();
       return;
     }
